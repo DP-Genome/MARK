@@ -1,115 +1,101 @@
-ONT DualCall SNP and INDEL Pipeline
+# ONT DualCall SNP and INDEL Pipeline
 
-Overview
+A reproducible Oxford Nanopore Technologies (ONT) pipeline for mitochondrial DNA (mtDNA) variant calling that generates **two VCF outputs per sample from a single callset**: one SNP-only and one SNP plus INDELs.
 
-This repository contains a single Oxford Nanopore Technologies (ONT) pipeline for mitochondrial DNA (mtDNA) variant calling that produces two VCF outputs per sample from one unified callset:
-	1.	SNP-only VCF
-	2.	SNP + INDEL VCF
+---
 
-Both outputs are derived from the same alignment and variant calling step, ensuring direct comparability between SNP-only and SNP+INDEL results.
+## Table of Contents
+- [Overview](#overview)
+- [Features](#features)
+- [Pipeline Logic](#pipeline-logic)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Inputs](#inputs)
+- [Usage](#usage)
+- [Outputs](#outputs)
+- [Configuration](#configuration)
+- [Repository Structure](#repository-structure)
+- [Intended Use](#intended-use)
+- [Limitations](#limitations)
+- [Reproducibility](#reproducibility)
+- [License](#license)
 
-The pipeline is intentionally conservative, transparent, and reproducible. It is designed for mtDNA analysis workflows where clarity, consistency, and auditability are priorities.
+---
 
-⸻
+## Overview
 
-Pipeline Name
+This repository provides a single Bash-based pipeline for conservative mtDNA variant calling from ONT sequencing data.  
+The pipeline performs alignment and variant calling **once per sample** and derives two downstream VCFs from the same filtered callset:
 
-Script
+- **SNP-only VCF**
+- **SNP + INDEL VCF**
 
-ont_dualcall_snps_indels_v1.0.sh
+This design guarantees direct comparability between variant representations without introducing caller-level divergence.
 
-Tag
+---
 
-ONT_DualCall_SNPs_INDELs_v1p0
+## Features
 
+- Single-pass variant calling per sample
+- Dual-output VCF generation from a shared callset
+- Conservative consensus calling strategy
+- Transparent preprocessing and filtering steps
+- Per-sample logging and QC outputs
+- Minimal dependencies, no custom binaries
 
-⸻
+---
 
-What This Pipeline Does
+## Pipeline Logic
 
-For each FASTQ file, the pipeline performs the following steps:
+FASTQ
+↓
+FastQC
+↓
+cutadapt (3′ pass)
+↓
+cutadapt (5′ pass)
+↓
+Fixed-end trimming
+↓
+minimap2 (map-ont)
+↓
+Sorted BAM
+↓
+bcftools mpileup
+↓
+bcftools call (consensus, ploidy 1)
+↓
+QUAL filtering
+↓
+┌───────────────────────┬────────────────────────┐
+│ SNP-only VCF          │ SNP + INDEL VCF         │
+│ (INDELs removed)      │ (all variants retained)│
+└───────────────────────┴────────────────────────┘
 
-1. Quality Control
-	•	FastQC on raw FASTQ input
-	•	FastQC on final aligned BAM
+---
 
-2. Adapter and Primer Trimming
-	•	Two-pass cutadapt trimming using a supplied adapter list:
-	•	3′ adapter trimming
-	•	5′ adapter trimming
-	•	Additional fixed trimming from both ends after adapter removal
-	•	Minimum read length enforced after trimming
+## Requirements
 
-3. Alignment
-	•	Alignment to a mitochondrial reference genome using minimap2 (ONT preset)
-	•	Sorted and indexed BAM output
+All tools must be available on the system PATH.
 
-4. Variant Calling
-	•	Variant calling performed once per sample using:
-	•	bcftools mpileup with base and mapping quality thresholds
-	•	bcftools call (consensus caller, ploidy 1)
-	•	QUAL-based filtering
+### Software
 
-5. Dual VCF Generation
+| Tool | Purpose |
+|-----|---------|
+| bash | Pipeline execution |
+| fastqc | Read and BAM quality control |
+| cutadapt | Adapter and primer trimming |
+| minimap2 | ONT read alignment |
+| samtools | BAM processing |
+| bcftools | Variant calling |
 
-From the same filtered callset, the pipeline produces:
-	•	SNP-only VCF
-INDELs are removed after variant calling.
-	•	SNP + INDEL VCF
-All variant types are retained.
+---
 
-⸻
+## Installation
 
-Outputs
+### Conda (Recommended)
 
-For each sample (one FASTQ file), the following files are produced:
-
-File	Description
-*_all_variants_raw.vcf	Raw SNP + INDEL calls before QUAL filtering
-*_all_variants.vcf	Filtered SNP + INDEL VCF
-*_snps.vcf	SNP-only VCF derived from the filtered callset
-*_sorted.bam	Sorted alignment
-*_sorted.bam.bai	BAM index
-*.log	Per-sample execution log
-FastQC reports	QC summaries
-
-Each sample is processed independently in its own output folder.
-
-⸻
-
-Intended Use
-
-This pipeline is suitable for:
-	•	Mitochondrial DNA variant analysis
-	•	Reproducible SNP reporting
-	•	Comparative analysis of SNP-only vs SNP+INDEL callsets
-	•	Method benchmarking and validation
-	•	Forensic and research workflows requiring conservative calling
-
-This pipeline is not intended for:
-	•	Somatic variant detection
-	•	Heteroplasmy quantification beyond basic inspection
-	•	Advanced indel normalization or realignment strategies
-	•	Clinical diagnostics without independent validation
-
-⸻
-
-Requirements
-
-All tools must be installed and available in the system PATH.
-
-Required Software
-
-Tool	Purpose
-bash	Pipeline execution
-fastqc	Quality control
-cutadapt	Adapter and primer trimming
-minimap2	ONT read alignment
-samtools	BAM processing
-bcftools	Variant calling
-
-Recommended Installation (Conda)
-
+```bash
 conda create -n ont_dualcall \
   fastqc cutadapt minimap2 samtools bcftools \
   -c bioconda -c conda-forge
@@ -119,27 +105,22 @@ conda activate ont_dualcall
 
 ⸻
 
-Input Requirements
+Inputs
 
 FASTQ Files
-	•	Input must be a directory containing FASTQ files
-	•	File extension must be .fastq
-	•	One sample per FASTQ file
-
-Example:
+	•	Input is a directory containing .fastq files
+	•	One FASTQ file per sample
 
 input_fastqs/
-├── sample1.fastq
-├── sample2.fastq
+├── sample_01.fastq
+├── sample_02.fastq
 
 
 ⸻
 
 Reference Genome
-	•	A mitochondrial reference genome in FASTA format
-	•	A linearized mtDNA reference is recommended
-
-Set via environment variable:
+	•	Mitochondrial reference genome in FASTA format
+	•	Linearized mtDNA reference recommended
 
 export ref=linearized_mtdna.fasta
 
@@ -148,48 +129,47 @@ export ref=linearized_mtdna.fasta
 
 Adapter File
 
-The pipeline requires a cutadapt adapter list file named:
+Required cutadapt adapter list:
 
 Updated_Adapter_Primer_List_Cutadapt_cleaned.txt
 
-The pipeline will search for this file in:
-	1.	The parent directory of the input FASTQ folder
-	2.	The current working directory
+Search order:
+	1.	Parent directory of the FASTQ folder
+	2.	Current working directory
 
-You may also specify it explicitly:
+Optional explicit specification:
 
 export ADAPTER_FILE=/path/to/Updated_Adapter_Primer_List_Cutadapt_cleaned.txt
 
 
 ⸻
 
-Running the Pipeline
+Usage
 
 ./ont_dualcall_snps_indels_v1.0.sh input_fastqs/
 
 
 ⸻
 
-Output Directory Structure
+Outputs
 
-Each run generates a timestamped output directory:
+Per sample, the pipeline produces:
 
-ont_dualcall_snps_indels_v1p0_YYYYMMDD_HHMMSS_output/
-└── sample1/
-    ├── sample1_all_variants_raw.vcf
-    ├── sample1_all_variants.vcf
-    ├── sample1_snps.vcf
-    ├── sample1_sorted.bam
-    ├── sample1_sorted.bam.bai
-    ├── sample1.log
-    ├── FastQC reports
+File	Description
+*_all_variants_raw.vcf	Unfiltered SNP + INDEL calls
+*_all_variants.vcf	Filtered SNP + INDEL VCF
+*_snps.vcf	SNP-only VCF
+*_sorted.bam	Sorted alignment
+*_sorted.bam.bai	BAM index
+*.log	Execution log
+FastQC reports	QC summaries
 
 
 ⸻
 
-Configuration Options
+Configuration
 
-All parameters can be overridden using environment variables:
+Parameters may be overridden via environment variables:
 
 export threads=8
 export QUAL_MIN=20
@@ -199,4 +179,42 @@ export MIN_LEN=90
 export EXTRA_TRIM=22
 export PILEUP_MAX_DEPTH=100000
 
-Default values are conservative and suitable for mtDNA sequencing data.
+
+⸻
+
+Repository Structure
+
+.
+├── ont_dualcall_snps_indels_v1.0.sh
+├── README.md
+├── LICENSE
+└── example/
+    ├── input_fastqs/
+    └── expected_output/
+
+
+⸻
+
+Intended Use
+	•	mtDNA variant analysis
+	•	SNP-only vs SNP+INDEL comparison
+	•	Method benchmarking and validation
+	•	Forensic and research workflows
+
+⸻
+
+Limitations
+	•	Consensus calling only
+	•	No heteroplasmy modeling
+	•	No indel normalization or realignment
+	•	Not validated for clinical diagnostics
+
+⸻
+
+Reproducibility
+	•	Single callset per sample
+	•	Deterministic SNP derivation
+	•	Per-sample logs capture all commands
+	•	External version pinning recommended
+
+
