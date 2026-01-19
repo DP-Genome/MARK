@@ -170,17 +170,6 @@ This script is typically run after:
 ./collect_corrected_vcfs_and_cleaned_bams.sh <source_directory>
 ```
 
----
-
-## Design Principles
-
-- Post-processing only; no variant calling or read filtering
-- Deterministic and reproducible transformations
-- Clear separation between analysis, correction, and visualization
-- Suitable for audit, validation, and forensic workflows
-
----
-
 ## Notes and Caveats
 
 - Coordinate correction assumes a single, known linearization strategy
