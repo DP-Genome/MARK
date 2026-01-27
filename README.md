@@ -1,205 +1,182 @@
-# ONT DualCall SNP and INDEL Pipeline
+# ONT_MITO_CALL_version2
 
 ## Overview
 
-This repository contains a bioinformatics pipeline for the analysis of mitochondrial DNA (mtDNA) sequencing data generated using Oxford Nanopore Technologies (ONT).
+This repository contains a specialized bioinformatics pipeline for the analysis of mitochondrial DNA (mtDNA) sequencing data generated using Oxford Nanopore Technologies (ONT).
 
-The pipeline accepts **either a single FASTQ file or multiple FASTQ files contained within a directory**. Each FASTQ file is processed independently and treated as a separate sample.
+The pipeline accepts **either a single FASTQ file or multiple FASTQ files contained within a directory**. Each FASTQ file is processed independently.
 
-The pipeline performs **read trimming, filtering, alignment, and variant calling**, producing **two variant call files (VCFs) per sample** from a single variant calling step:
-- A SNP-only VCF
-- A SNP + INDEL VCF
+The pipeline performs **read quality filtering (QS score), rigorous trimming, alignment, variant calling, and region-based annotation**. Unlike standard pipelines, this workflow produces **four distinct VCF datasets per sample** to separate high-confidence variants from homopolymer-associated calls and known artifacts.
 
-Correct operation of the pipeline depends on:
-- A **supplied adapter/primer/barcode file** used for trimming
-- A **linearized mitochondrial DNA reference genome**
+Correct operation depends on:
 
-Core tools used include `cutadapt`, `minimap2`, `samtools`, and `bcftools`.
+* A **supplied adapter/primer/barcode file** for trimming.
+* A **linearized mitochondrial DNA reference genome**.
+* A **BED file** defining Homopolymer (HP) and Blacklisted regions for annotation.
+
+Core tools include `cutadapt`, `minimap2`, `samtools`, and `bcftools`.
 
 ---
 
 ## Pipeline Workflow
 
-The pipeline processes raw sequencing data in FASTQ format and generates filtered variant call files (VCF).  
 The major processing steps are described below.
 
 ---
 
-## Step 1: Quality Control of Raw Reads
+## Step 1: Quality Score (QS) Filtering
 
-Initial quality assessment is performed on raw FASTQ files to identify potential sequencing quality issues.
+Before processing, raw reads are filtered based on the `qs:f` tag found in standard ONT FASTQ headers. This ensures only high-quality reads enter the analysis pipeline.
 
-```bash
-fastqc sample.fastq
-```
-
-This step generates FastQC reports for manual inspection.
-
----
-
-## Step 2: Adapter, Primer, and Barcode Trimming (cutadapt)
-
-Adapters, primers, and barcodes are removed using a **two-pass trimming strategy** based on a supplied adapter file:
-
-1. 3′ adapter trimming  
-2. 5′ adapter trimming  
-
-A minimum read length threshold is enforced after trimming to remove short or low-quality reads.
+* **Default Threshold:** Q-Score ≥ 10
+* *Configurable via `QS_MIN` environment variable.*
 
 ```bash
-cutadapt -a file:adapters.txt -o trimmed_3prime.fastq sample.fastq
-cutadapt -g file:adapters.txt -o trimmed_5prime.fastq trimmed_3prime.fastq
-```
+# Internal logic
+awk '... keep read if qs >= 10 ...' input.fastq > input_qsGE10.fastq
 
-The adapter file is a required input and must contain all expected adapter, primer, and barcode sequences.
-
----
-
-## Step 3: Fixed End Trimming and Length Filtering
-
-After adapter removal, a fixed number of bases are trimmed from both ends of each read to remove residual primer sequence or low-quality regions.
-
-Reads shorter than the minimum length threshold after trimming are discarded.
-
-```bash
-cutadapt -u 22 -u -22 -o trimmed_final.fastq trimmed_5prime.fastq
 ```
 
 ---
 
-## Step 4: Sequence Alignment with minimap2
+## Step 2: Quality Control (FastQC)
 
-Trimmed reads are aligned to a **linearized mitochondrial DNA reference genome** using the ONT-optimized preset in `minimap2`.
-
-A linearized mtDNA reference is required to avoid edge effects associated with circular genomes.
+Quality assessment is performed on the **QS-filtered** reads to verify improvement and identify remaining issues.
 
 ```bash
-minimap2 -ax map-ont linearized_mtdna.fasta trimmed_final.fastq > aligned.sam
+fastqc sample_qsGE10.fastq
+
 ```
 
 ---
 
-## Step 5: Conversion to BAM Format and Sorting
+## Step 3: Adapter & Primer Trimming (cutadapt)
 
-The SAM alignment output is converted to BAM format and sorted by genomic coordinates.
+Adapters and primers are removed using a **two-pass trimming strategy**:
+
+1. **3′ adapter trimming**
+2. **5′ adapter trimming**
+3. **Fixed End Trimming:** A fixed number of bases (default: 22) are trimmed from *both* ends of the read to remove residual artifacts.
+4. **Length Filtering:** Reads shorter than the minimum length (default: 90bp) are discarded.
 
 ```bash
-samtools view -Sb aligned.sam | samtools sort -o sorted.bam
+cutadapt -u 22 -u -22 -m 90 ...
+
 ```
 
 ---
 
-## Step 6: Indexing the Sorted BAM File
+## Step 4: Sequence Alignment (minimap2)
 
-An index is created for the sorted BAM file to enable efficient random access during variant calling.
+Trimmed reads are aligned to a **linearized mitochondrial DNA reference genome** using the `map-ont` preset.
 
 ```bash
-samtools index sorted.bam
+minimap2 -ax map-ont linearized_mtdna.fasta trimmed_reads.fastq | samtools sort > sorted.bam
+
 ```
 
 ---
 
-## Step 7: Variant Calling with bcftools
+## Step 5: Variant Calling (bcftools)
 
-Variant calling is performed once per sample using a consensus-based approach suitable for haploid mitochondrial DNA.
+Variant calling is performed using a consensus-based approach (Ploidy 1).
+
+* **High Depth Support:** `mpileup` is configured to handle depths up to 100,000x.
+* **Qual Filtering:** Low-confidence variants (QUAL < 20) are discarded immediately.
 
 ```bash
-bcftools mpileup -f linearized_mtdna.fasta sorted.bam | \
-bcftools call -cv --ploidy 1 -Ov > all_variants_raw.vcf
+bcftools mpileup -d 100000 -Q 20 -q 20 ... | bcftools call -cv --ploidy 1
+
 ```
 
 ---
 
-## Step 8: Variant Quality Filtering
+## Step 6: Region Annotation & Output Splitting
 
-Variants are filtered based on their QUAL score to remove low-confidence calls.
+This is the core differentiation of the v2 pipeline. The raw variants are **annotated** using a user-provided BED file to flag regions as either "HP_Region" (Homopolymer) or "Blacklist_Site".
 
-```bash
-bcftools filter -i 'QUAL>20' all_variants_raw.vcf -Ov > all_variants.vcf
-```
+The annotated VCF is then split into four specific output files:
 
----
-
-## Step 9: SNP-Only Variant Extraction
-
-A SNP-only VCF is generated by removing INDELs after variant calling, while retaining the same filtered callset.
-
-```bash
-bcftools view -i 'TYPE="snp"' all_variants.vcf -Ov > snps.vcf
-```
+1. **Annotated All:** All variants with region tags.
+2. **SNPs (Special):** SNPs only. **Excludes** known artifact positions (e.g., 7898, 7899, 8595).
+3. **Clean:** High-confidence variants. **Excludes** all Homopolymer regions and Blacklist sites.
+4. **Homopolymers:** Contains **only** variants found within Homopolymer regions.
 
 ---
 
 ## Outputs
 
-For each input FASTQ file, the pipeline produces:
+For each input FASTQ file (e.g., `SampleA`), the pipeline creates a folder `ONT_MITO_CALL_version2_[TIMESTAMP]_output/SampleA/` containing:
 
-- `*_all_variants_raw.vcf` – unfiltered SNP + INDEL calls  
-- `*_all_variants.vcf` – filtered SNP + INDEL calls  
-- `*_snps.vcf` – SNP-only variant calls  
-- Sorted and indexed BAM files  
-- FastQC quality control reports  
-- Per-sample execution logs  
-
-Each FASTQ file is processed independently, whether provided alone or as part of a directory.
+| File Name | Description |
+| --- | --- |
+| `*_qsGE10_clean.vcf` | **Primary Output.** Variants excluding HP regions and Blacklist sites. |
+| `*_qsGE10_snps.vcf` | SNPs only. Excludes specific artifact positions (7898, 7899, 8595). |
+| `*_qsGE10_homopolymers.vcf` | Variants found exclusively in Homopolymer regions. |
+| `*_qsGE10_annotated_all.vcf` | The complete callset with `RegionType` annotations. |
+| `*_qsGE10.fastq` | The QS-filtered FASTQ file used for analysis. |
+| `*.bam` / `*.bam.bai` | Sorted alignment file and index. |
+| `*.log` | Detailed execution log. |
 
 ---
 
 ## Usage
 
 ```bash
-./ont_dualcall_snps_indels_v1.0.sh <fastq_file_or_folder>
+./ONT_MITO_CALL_version2.sh <input_fastq_folder>
+
 ```
 
-The input may be:
-- A directory containing one or more `.fastq` files
-- A directory containing a single `.fastq` file
+The input must be a directory containing `.fastq` or `.fastq.gz` files.
 
 ---
 
-## Required Inputs
+## Configuration & Requirements
 
-### Adapter / Primer / Barcode File
+### 1. Adapter File
 
-A cutadapt adapter file is required and must include all expected adapter, primer, and barcode sequences.
-
-File name expected by default:
-```
-Updated_Adapter_Primer_List_Cutadapt_cleaned.txt
-```
-
-The pipeline searches for this file in:
-1. The parent directory of the FASTQ input
-2. The current working directory
-
-Alternatively, it can be specified explicitly:
-```bash
-export ADAPTER_FILE=/path/to/adapter_file.txt
-```
-
----
-
-### Reference Genome
-
-A **linearized mitochondrial DNA reference genome** in FASTA format is required.
+A cutadapt adapter file is required. The pipeline looks for `Updated_Adapter_Primer_List_Cutadapt_cleaned.txt` in the parent or current directory, or you can specify it manually:
 
 ```bash
-export ref=linearized_mtdna.fasta
+export ADAPTER_FILE=/path/to/adapters.txt
+
 ```
 
-The reference is indexed automatically if required.
+### 2. Reference & Annotation Files
+
+You must provide the linearized reference and the corresponding regions BED file.
+
+```bash
+export ref="linearized_mtdna.fasta"
+export regions_bed="linearized_regions.bed"
+
+```
+
+*(Note: Ensure `regions_bed` is generated using the associated Python script before running the pipeline).*
+
+### 3. Environment Variables (Optional Overrides)
+
+You can override these defaults by exporting them before running the script:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `QS_MIN` | **10** | Minimum Read Mean Quality Score (from `qs:f` tag). |
+| `threads` | 8 | Number of threads for parallel processing. |
+| `QUAL_MIN` | 20 | Minimum Variant QUAL score. |
+| `MIN_LEN` | 90 | Minimum read length after trimming. |
+| `EXTRA_TRIM` | 22 | Bases trimmed from both ends of the read. |
+| `PILEUP_MAX_DEPTH` | 100000 | Max depth for pileup (prevents downsampling). |
 
 ---
 
-## Requirements
+## Software Requirements
 
-The following software must be installed and available in the system PATH:
+The following tools must be in your PATH:
 
-- bash  
-- fastqc  
-- cutadapt  
-- minimap2  
-- samtools  
-- bcftools  
-
-
+* bash
+* fastqc
+* cutadapt
+* minimap2
+* samtools
+* bcftools
+* awk
