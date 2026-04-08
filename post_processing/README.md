@@ -380,8 +380,7 @@ The dashboard’s post-processing relies on tools such as:
 
 ## Known Limitations and Notes
 
-- `MitoPipelineDashboardv4.7.py` still defaults to an older script path and should be pointed manually to the current pipeline script.
-- `SequenceAnalyzerApp_v3.py` is labeled around v32 output conventions in its UI, but the underlying logic is still useful for newer runs as long as the output naming remains consistent.
+- `MitoPipelineDashboardv4.7.py`  defaults to the current script released path that are assumed to be in the same directory as the program itself. If using a different script, it should be pointed to manually.
 - `VCF_OrganizerApp.py` depends entirely on filename conventions and a correct mapping JSON. If the sample identifiers in filenames are inconsistent, organization will be unreliable.
 - `vcf_compare_guiv3.py` compares by parsed VCF position and alleles. It is useful for concordance analysis, but it is not a truth-evaluation engine with sensitivity and specificity metrics.
 
