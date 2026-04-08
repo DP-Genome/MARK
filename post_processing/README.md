@@ -360,7 +360,7 @@ Depending on which tool you run, you may need:
 - `numpy`
 - `pandas`
 - `matplotlib`
-- `pysam` fileciteturn1file0turn1file1turn1file3
+- `pysam`
 
 Install them with:
 
