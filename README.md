@@ -1,343 +1,463 @@
-# Mitochondrial DNA Diagnostic Split-Track Pipelines v32
+# Mitochondrial DNA Diagnostic Split-Track Pipelines v36
 
 ## Overview
 
-This repository contains two specialized bioinformatics pipelines for mitochondrial DNA (mtDNA) analysis using a **diagnostic split-track design**:
+This repository contains two mitochondrial DNA analysis pipelines built around the same **diagnostic split-track design**:
 
-- **`ONT_MITO_v32.sh`** for Oxford Nanopore Technologies (ONT) data
-- **`ILM_MITO_v32.sh`** for Illumina paired-end data
+- `ONT_MITO_v36.sh` for Oxford Nanopore Technologies data
+- `ILM_MITO_v36.sh` for Illumina paired-end data
 
-These pipelines are designed for **targeted mitochondrial control region analysis** using a **linearized mtDNA reference**, with a particular focus on handling **overlapping amplicon edge effects** and evaluating the impact of read masking on downstream variant calling.
-
-Unlike a standard single-track workflow, each pipeline generates **two parallel analysis tracks per sample**:
+Both pipelines process targeted mtDNA control-region data against a **linearized mitochondrial reference** and then split each sample into two downstream analysis tracks:
 
 1. **Baseline track**  
-   Standard alignment and variant calling without amplicon masking.
+   No amplicon-boundary trimming is applied after alignment.
+2. **Trimmed track**  
+   Reads are reassigned to a single amplicon using a **maximum-overlap rule**, then trimmed in alignment space by rewriting the CIGAR with soft-clipping so that only the tiled target interval for that amplicon is retained.
 
-2. **Masked track**  
-   Experimental masking logic is applied to aligned reads using midpoint-based amplicon assignment, with a minimal boundary rescue window controlled by `EDGE_PROTECT`.
-
-The **main intended product** of these pipelines is:
-
-- **`*_masked_snps.vcf`**
-
-All other outputs are produced for **evaluation, troubleshooting, validation, and double-checking**, including comparison against the baseline track and inspection of filtering behavior.
-
-Both pipelines also generate **run-level read-retention summaries** so that read loss can be tracked step by step through preprocessing, trimming, and filtering.
+Version 36 is a refinement of the recent split-track model and specifically introduces a fix for the **1 bp gap at the left border of amplicons** caused by 0-based coordinate conversion, while retaining the soft-clipping and maximum-overlap framework from recent versions.
 
 ---
 
-## Primary Output
+## What changed in v36
 
-The main output file for each sample is:
+### Shared v36 changes
 
-- **`*_masked_snps.vcf`**
+- fixes the 1 bp gap on the left border of amplicons
+- retains the v34/v35 soft-clipping strategy
+- retains **maximum-overlap amplicon assignment** for read-to-amplicon selection
+- uses **perfectly tiled amplicon bounds** for the trimmed track to eliminate internal gaps and overlaps between retained target intervals
+- keeps the same dual-track comparison design so baseline and trimmed outputs can be compared directly
 
-This file represents the **masked-track SNP-only VCF** after:
+### Important terminology change
 
-- alignment
-- masking
-- variant calling
-- QUAL and depth filtering
-- annotation
-- exclusion of specific artifact positions
+Older repository versions described the second track as a **masked** track. In v36, the scripts generate a **trimmed** track instead:
 
-This is the file intended to serve as the primary variant callset for downstream review and interpretation.
-
----
-
-## General Pipeline Design
-
-Both v32 pipelines retain the original midpoint-assignment masking model from version 31, but introduce a small boundary rescue window to reduce loss of true variants near assigned amplicon edges.
-
-### Key v32 changes
-
-- Retains original midpoint-based read-to-amplicon assignment
-- Adds a minimal **`EDGE_PROTECT`** window at assigned amplicon boundaries
-- Preserves the masking model elsewhere to avoid broad callset disruption
-- Removes reference FASTA loading from Python memory to improve speed
+- output names now use `trimmed`
+- BAM editing is performed by **CIGAR rewriting and soft-clipping**, not by simple base-quality masking terminology
 
 ---
 
-## Pipeline Workflow
+## General pipeline design
 
-The general steps are summarized below.
+Both pipelines follow the same high-level structure:
+
+1. input discovery
+2. initial read-retention safety filtering
+3. QC and adapter/primer trimming
+4. alignment to a linearized mtDNA reference
+5. generation of two comparison tracks from the aligned BAM
+6. independent variant calling on each track
+7. annotation and export of multiple diagnostic VCFs
+8. depth comparison between baseline and trimmed tracks
+
+This repository is therefore designed not only to produce final call files, but also to make it easier to see **what changed, where reads were lost, and how the trimming logic affected depth and variants**.
 
 ---
 
-## Step 1: Input Handling
+## Input handling
 
 ### ONT pipeline
-`ONT_MITO_v32.sh` accepts a folder containing `.fastq` or `.fastq.gz` files. Each file is treated as one sample and processed independently.
+
+`ONT_MITO_v36.sh` accepts a folder containing:
+
+- `.fastq`
+- `.fastq.gz`
+
+Each FASTQ is treated as one sample.
 
 ### Illumina pipeline
-`ILM_MITO_v32.sh` accepts a folder containing paired-end FASTQ files. It searches for matching `R1` and `R2` pairs and processes each sample independently.
+
+`ILM_MITO_v36.sh` accepts a folder containing paired-end FASTQs. The script searches for matching read pairs using names that contain either:
+
+- `_R1` / `_R2`
+- `.R1` / `.R2`
+
+Each discovered pair is treated as one sample.
 
 ---
 
-## Step 2: Read-Length Safety Filtering
+## Preprocessing and trimming
 
-Both pipelines apply an initial read-length control step before core processing.
+## 1. Length-safety filtering
+
+Both pipelines begin with a length-safety step to remove clearly unsuitable reads before core analysis.
 
 ### ONT
-Reads longer than the configured `MAX_LEN` threshold are removed using `fastplong`.
 
-- Default: `MAX_LEN=1500`
+Uses `fastplong`.
+
+Default:
+
+- `MAX_LEN=1500`
 
 ### Illumina
-R1 and R2 reads are filtered with `fastp` length-limit mode before merging.
 
-- Default: `MAX_LEN=3000`
+Uses `fastp` in paired mode before merging.
 
-This step is intended to remove anomalous or unsuitable reads before further analysis.
+Default:
+
+- `MAX_LEN=3000`
 
 ---
 
-## Step 3: Read Quality and Preprocessing
+## 2. Platform-specific preprocessing
 
 ### ONT
-After length filtering, the ONT pipeline optionally filters reads based on the `qs:f:` tag in the FASTQ header.
 
-- Default: `QS_MIN=10`
+After length filtering, the ONT pipeline optionally filters reads by the `qs:f:` tag in the FASTQ header.
 
-If the `qs:f:` tag is absent, the pipeline keeps the reads and proceeds without QS filtering.
+Default:
+
+- `QS_MIN=10`
+
+If the `qs:f:` tag is absent, the pipeline keeps the reads and continues.
 
 ### Illumina
-The Illumina pipeline performs merged-read generation using `fastp` with:
 
-- quality threshold filtering
-- unqualified base percentage control
-- minimum merged-read length filtering
-- `N` base limit filtering
+The Illumina pipeline merges paired reads with `fastp` and applies merged-read filtering during that step.
 
-Default Illumina merge/filter parameters:
+Default merge/filter settings:
 
 - `READQ=20`
 - `UNQUAL_PCT=40`
 - `MIN_LEN=90`
 - `N_BASE_LIMIT=5`
 
----
-
-## Step 4: Quality Control
-
-FastQC is run on the processed FASTQ input prior to alignment.
-
-- ONT: FastQC is run on the QS-filtered FASTQ
-- Illumina: FastQC is run on the merged FASTQ
-
-An additional FastQC run is also performed on the final masked BAM output for diagnostic review.
+Because `--include_unmerged` is enabled, the merged FASTQ can contain both merged and retained unmerged reads, which is relevant when interpreting downstream read-retention counts.
 
 ---
 
-## Step 5: Adapter and Primer Trimming
+## 3. QC
+
+FastQC is run before alignment:
+
+- ONT: on the QS-filtered FASTQ
+- Illumina: on the merged FASTQ
+
+A later FastQC run is also performed on the final **trimmed BAM** for diagnostic review.
+
+---
+
+## 4. Adapter and primer trimming
 
 Both pipelines use a two-pass `cutadapt` strategy:
 
-1. **3′ trimming** using `-a file:<adapter_file>`
-2. **5′ trimming** using `-g file:<adapter_file>`
+1. 3′ trimming with `-a file:<adapter_file>`
+2. 5′ trimming with `-g file:<adapter_file>`
 
-Optional fixed-end trimming is then applied using `EXTRA_TRIM`.
+Optional fixed trimming from both ends is then applied with `EXTRA_TRIM`.
 
-- Default: `EXTRA_TRIM=0`
-- Minimum retained read length after trimming: `MIN_LEN=90`
+Defaults:
 
-The adapter/primer/barcode file is expected to be:
+- `CUTADAPT_ERR=0.10`
+- `CUTADAPT_OVL=5`
+- `EXTRA_TRIM=0`
+- `MIN_LEN=90`
 
-`Updated_Adapter_Primer_List_Cutadapt_cleaned.txt`
+After this, both pipelines perform an additional post-trim length filter using `fastp`.
 
-The pipeline looks for this file in:
-- the parent directory of the input folder
-- the current working directory
+Defaults:
 
-Or it can be set manually with `ADAPTER_FILE`.
+- `MIN_LEN_POST=90`
+- `MAX_LEN_POST=300`
 
 ---
 
-## Step 6: Alignment
+## Reference and annotation inputs
+
+Both pipelines expect:
+
+- a linearized mtDNA reference FASTA
+- a BED file describing annotated regions such as homopolymer regions and blacklist sites
+- an adapter/primer list for `cutadapt`
+
+Default filenames:
+
+- `linearized_mtdna.fasta`
+- `linearized_regions.bed`
+- `Updated_Adapter_Primer_List_Cutadapt_cleaned.txt`
+
+### Adapter file lookup behavior
+
+If `ADAPTER_FILE` is not exported manually, the pipelines look for the adapter file in:
+
+1. the parent directory of the input folder
+2. the current working directory
+
+### Automatic indexing
+
+- the ONT pipeline auto-builds the minimap2 `.mmi` index if needed
+- the Illumina pipeline auto-builds the `bwa-mem2` index if needed
+- both pipelines create a FASTA index with `samtools faidx` if missing
+
+---
+
+## Alignment
 
 ### ONT
-Alignment is performed with `minimap2` using the `map-ont` preset against the linearized mitochondrial reference.
+
+Alignment uses `minimap2` with the `map-ont` preset:
 
 ```bash
-minimap2 -ax map-ont reference.mmi sample.fastq | samtools sort -o sample_initial_sorted.bam
+minimap2 -ax map-ont -t <threads> <ref.mmi> <reads.fastq>
 ```
 
 ### Illumina
-Alignment is performed with `bwa-mem2` against the linearized mitochondrial reference.
+
+Alignment uses `bwa-mem2`:
 
 ```bash
-bwa-mem2 mem reference.fasta sample.fastq | samtools sort -o sample_initial_sorted.bam
+bwa-mem2 mem -t <threads> <ref.fasta> <reads.fastq>
 ```
 
-Reference indexing is generated automatically if missing.
+The aligned reads are converted to BAM, sorted, and indexed before track splitting.
 
 ---
 
-## Step 7: Diagnostic Split-Track Generation
+## Diagnostic split-track design
 
-After the initial sorted BAM is created, the pipeline splits into two tracks.
+After the initial aligned BAM is created, each sample is split into two tracks.
 
 ### Track A: Baseline
-The initial BAM is copied directly and used as the unmasked comparison track.
 
-Outputs from this track are used for:
-- internal comparison
-- diagnostic review
-- confirmation that masking is not removing expected signal
+The initial sorted BAM is copied directly:
 
-### Track B: Masked
-The initial BAM is streamed through an embedded Python masking step that:
+- `*_baseline_sorted.bam`
 
-- assigns each read to the nearest amplicon by midpoint
-- preserves bases within the assigned amplicon
-- applies a minimal rescue window at the boundaries using `EDGE_PROTECT`
-- masks bases outside the retained region by lowering base qualities
-- removes reads falling completely outside the retained assigned region
+This track serves as the unmodified comparison track.
 
-This masked BAM is then used for downstream calling.
+### Track B: Trimmed
 
-The key purpose of this step is to reduce overlap-related artifacts while preserving genuine edge variants as much as possible.
+The initial BAM is streamed through an embedded Python routine that:
+
+- skips unmapped and secondary alignments
+- computes the reference span of each alignment from the CIGAR
+- assigns each read to the amplicon with the **largest overlap**
+- uses a fixed set of **tiled amplicon bounds** for retained intervals
+- rewrites the alignment CIGAR with soft-clipping so only the assigned tiled interval is retained
+- discards reads that fall completely outside the retained target interval
+- strips leading and trailing deletions from the active retained segment
+- writes the resulting alignments into:
+  - `*_trimmed_sorted.bam`
+
+This trimmed track is the experimental track used to examine the effect of amplicon-boundary enforcement on downstream calling.
 
 ---
 
-## Step 8: Variant Calling
+## Amplicon logic used in v36
 
-Variant calling is performed independently for both baseline and masked tracks using `bcftools mpileup` and `bcftools call`.
+The embedded Python defines original amplicon spans and separate **tiled bounds** used for retention.
 
-Common defaults:
+Original amplicon spans:
 
-- ploidy: `1`
-- `FORMAT/AD` and `FORMAT/DP` retained
+- Amp1: 7729 to 7842
+- Amp2: 7832 to 7941
+- Amp3: 7939 to 8124
+- Amp4: 8103 to 8202
+- Amp5: 8190 to 8315
+- Amp6: 8271 to 8437
+- Amp7: 8421 to 8542
+- Amp8: 8531 to 8649
+- Amp9: 8627 to 8721
+- Amp10: 8714 to 8877
+
+Tiled retention bounds used by the trimmed track:
+
+- Amp1: 7729 to 7837
+- Amp2: 7838 to 7940
+- Amp3: 7941 to 8113
+- Amp4: 8114 to 8196
+- Amp5: 8197 to 8293
+- Amp6: 8294 to 8429
+- Amp7: 8430 to 8536
+- Amp8: 8537 to 8638
+- Amp9: 8639 to 8717
+- Amp10: 8718 to 8877
+
+These tiled bounds are what enforce the no-gap, no-overlap retained intervals in the trimmed track.
+
+---
+
+## Variant calling
+
+Variant calling is performed independently on the baseline and trimmed BAMs.
+
+Common logic:
+
+```bash
+bcftools mpileup -a FORMAT/AD,FORMAT/DP \
+  -d <PILEUP_MAX_DEPTH> \
+  -Q<BASEQ_MIN> \
+  -q<MAPQ_MIN> \
+  -Ou -f <ref> <bam> \
+| bcftools call -mv --ploidy 1 -Ov
+```
+
+Defaults:
+
 - `PILEUP_MAX_DEPTH=100000`
 - `BASEQ_MIN=20`
 - `MAPQ_MIN=20`
+- ploidy `1`
 
 Initial post-calling filter:
 
 - `QUAL > SAFETY_QUAL`
 - `INFO/DP >= MIN_DEPTH`
 
-Default values:
+Defaults:
 
 - `SAFETY_QUAL=20`
 - `MIN_DEPTH=10`
 
 ---
 
-## Step 9: Annotation and Output Splitting
+## Annotation and VCF output generation
 
-Filtered VCFs are annotated using the supplied BED file to mark regions such as:
+If the quality-filtered VCF is non-empty, it is annotated with the BED file so that variants can be labeled by region class.
+
+Region labels currently documented by the header inserted during runtime:
 
 - `HP_Region`
 - `Blacklist_Site`
 
-Each track then produces multiple VCF outputs.
+After annotation, each track produces several downstream VCFs.
 
-### Main output
-- **`*_masked_snps.vcf`**
+### SNP-only VCF
 
-### Additional masked outputs
-- `*_masked_annotated_all.vcf`
-- `*_masked_clean.vcf`
-- `*_masked_homopolymers.vcf`
-- `*_masked_raw.vcf`
-- `*_masked_qual_filtered.vcf`
+Generated by retaining:
 
-### Baseline comparison outputs
-- `*_baseline_snps.vcf`
-- `*_baseline_annotated_all.vcf`
-- `*_baseline_clean.vcf`
-- `*_baseline_homopolymers.vcf`
-- `*_baseline_raw.vcf`
-- `*_baseline_qual_filtered.vcf`
-
-### SNP filtering details
-The SNP-only files are restricted to SNPs passing the stricter threshold:
-
+- `TYPE="snp"`
 - `QUAL > STRICT_QUAL`
 
-Default:
-
-- `STRICT_QUAL=60`
-
-The SNP-only outputs also exclude specific predefined artifact positions:
+and then excluding the predefined artifact positions:
 
 - `7898`
 - `7899`
 - `8595`
 
-### Clean VCF logic
-The `*_clean.vcf` outputs exclude calls annotated as:
+Outputs:
 
-- `HP_Region`
-- `Blacklist_Site`
+- `*_baseline_snps.vcf`
+- `*_trimmed_snps.vcf`
 
-### Homopolymer VCF logic
-The `*_homopolymers.vcf` outputs retain only variants annotated as:
+### Clean VCF
 
-- `HP_Region`
+Generated from SNPs passing the strict QUAL filter and then excluding:
+
+- `RegionType="HP_Region"`
+- `RegionType="Blacklist_Site"`
+
+Outputs:
+
+- `*_baseline_clean.vcf`
+- `*_trimmed_clean.vcf`
+
+### Homopolymer-only VCF
+
+Retains variants annotated as:
+
+- `RegionType="HP_Region"`
+
+Outputs:
+
+- `*_baseline_homopolymers.vcf`
+- `*_trimmed_homopolymers.vcf`
+
+### Additional intermediate VCFs
+
+Each track also retains:
+
+- `*_raw.vcf`
+- `*_qual_filtered.vcf`
+- `*_annotated_all.vcf`
+
+These are diagnostic outputs and are useful when tracing why a variant appears or disappears between steps.
 
 ---
 
-## Diagnostic Outputs
+## Output files
 
-The v32 pipelines are designed to support troubleshooting and validation, not only final calling.
+For each sample, the most important output files are usually:
 
-### 1. Run summary
-Each run produces:
+- `*_trimmed_snps.vcf` for the trimmed-track SNP callset
+- `*_trimmed_clean.vcf` for the trimmed-track SNP callset after homopolymer and blacklist exclusion
+- `*_baseline_snps.vcf` for direct comparison to the untrimmed baseline track
+
+Because the repository is diagnostic by design, there is no single output that makes the others redundant. The files serve different purposes:
+
+- `raw` and `qual_filtered` help inspect pre-annotation and early post-call filtering
+- `annotated_all` shows region labeling
+- `snps` gives the strict SNP-only view with artifact-position exclusion
+- `clean` gives the stricter review set excluding homopolymer and blacklist regions
+- `homopolymers` isolates calls in homopolymer regions for manual review
+
+---
+
+## Read-retention and depth diagnostics
+
+Each run produces a run-level summary file:
 
 - `run_summary.txt`
 
-This file tracks read retention and read loss across preprocessing stages for every sample.
+This records, per sample and per stage:
 
-### 2. Sample log
-Each sample folder contains:
+- reads in
+- reads out
+- dropped reads
+- dropped percentage
 
-- `*.log`
+Each sample also gets a log file:
 
-This log records the executed commands and pipeline progression.
+- `<sample>.log`
 
-### 3. Depth comparison
-For each sample, the pipeline calculates and prints:
+This records command execution and includes a depth comparison summary:
 
 - baseline average depth
-- masked average depth
+- trimmed average depth
 
-This is intended to help assess the impact of the masking step on usable coverage.
+This makes v36 useful not just for generating callsets, but also for investigating where coverage is being lost.
 
 ---
 
-## Output Structure
+## Output structure
 
-Each run produces a timestamped output directory:
+Each run creates a timestamped output directory.
 
 ### ONT
+
 ```text
-ONT_MITO_v32_<input_folder_name>_<timestamp>_output/
+ONT_MITO_v36_<input_folder_name>_<timestamp>_output/
 ```
 
 ### Illumina
+
 ```text
-ILM_MITO_v32_<input_folder_name>_<timestamp>_output/
+ILM_MITO_v36_<input_folder_name>_<timestamp>_output/
 ```
 
-Within each run folder, each sample gets its own subdirectory containing intermediate and final outputs.
+Within that folder, each sample gets its own subdirectory.
 
 Example:
 
 ```text
-ONT_MITO_v32_FASTQS_20260326_120000_output/
+ONT_MITO_v36_FASTQS_20260408_120000_output/
 └── barcode07/
-    ├── barcode07_masked_snps.vcf
-    ├── barcode07_masked_clean.vcf
-    ├── barcode07_masked_homopolymers.vcf
-    ├── barcode07_masked_annotated_all.vcf
+    ├── barcode07_initial_sorted.bam
+    ├── barcode07_baseline_sorted.bam
+    ├── barcode07_trimmed_sorted.bam
+    ├── barcode07_baseline_raw.vcf
+    ├── barcode07_baseline_qual_filtered.vcf
+    ├── barcode07_baseline_annotated_all.vcf
     ├── barcode07_baseline_snps.vcf
     ├── barcode07_baseline_clean.vcf
-    ├── barcode07_initial_sorted.bam
-    ├── barcode07_masked_sorted.bam
-    ├── barcode07_baseline_sorted.bam
+    ├── barcode07_baseline_homopolymers.vcf
+    ├── barcode07_trimmed_raw.vcf
+    ├── barcode07_trimmed_qual_filtered.vcf
+    ├── barcode07_trimmed_annotated_all.vcf
+    ├── barcode07_trimmed_snps.vcf
+    ├── barcode07_trimmed_clean.vcf
+    ├── barcode07_trimmed_homopolymers.vcf
     ├── barcode07.log
     └── ...
 ```
@@ -347,175 +467,164 @@ ONT_MITO_v32_FASTQS_20260326_120000_output/
 ## Usage
 
 ### ONT
+
 ```bash
-./ONT_MITO_v32.sh <input_fastq_folder>
+./ONT_MITO_v36.sh <input_fastq_folder>
 ```
 
 ### Illumina
+
 ```bash
-./ILM_MITO_v32.sh <input_fastq_folder>
+./ILM_MITO_v36.sh <input_fastq_folder>
 ```
-
-The input must be a directory containing the expected FASTQ files.
-
-- ONT: `.fastq` or `.fastq.gz`
-- Illumina: paired-end files containing `R1/R2` or `.R1/.R2`
 
 ---
 
-## Required Files
+## Required software
 
-### 1. Adapter file
-Required for cutadapt trimming.
+### Common
 
-Default expected filename:
+- bash
+- python3
+- awk
+- samtools
+- bcftools
+- cutadapt
+- fastqc
 
-```bash
-Updated_Adapter_Primer_List_Cutadapt_cleaned.txt
-```
+### ONT
 
-Manual override:
+- minimap2
+- fastplong
 
-```bash
-export ADAPTER_FILE=/path/to/Updated_Adapter_Primer_List_Cutadapt_cleaned.txt
-```
+### Illumina
 
-### 2. Reference FASTA
-Required linearized mitochondrial reference:
-
-```bash
-export ref="linearized_mtdna.fasta"
-```
-
-### 3. Regions BED
-Required annotation BED file:
-
-```bash
-export regions_bed="linearized_regions.bed"
-```
-
-### 4. ONT minimap2 index
-For ONT, the minimap2 index is expected as:
-
-```bash
-export mmi_index="linearized_mtdna.fasta.mmi"
-```
-
-If missing, it is generated automatically.
+- bwa-mem2
+- fastp
 
 ---
 
-## Configurable Parameters
+## Environment-variable configuration
 
-The pipelines can be customized by exporting environment variables before execution.
+The pipelines are designed to be configured through exported environment variables before execution.
 
 ### Common parameters
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `threads` | 8 | Number of threads |
-| `MIN_LEN` | 90 | Minimum read length after trimming |
-| `EXTRA_TRIM` | 0 | Fixed number of bases trimmed from both ends |
-| `CUTADAPT_ERR` | 0.10 | Cutadapt error rate |
-| `CUTADAPT_OVL` | 5 | Minimum cutadapt overlap |
+| `threads` | `8` | Number of threads |
+| `MIN_LEN` | `90` | Minimum length allowed during cutadapt trimming |
+| `MIN_LEN_POST` | `90` | Minimum length after post-trim length filtering |
+| `MAX_LEN_POST` | `300` | Maximum length after post-trim length filtering |
+| `EXTRA_TRIM` | `0` | Fixed trimming from both read ends after cutadapt |
+| `CUTADAPT_ERR` | `0.10` | Cutadapt error rate |
+| `CUTADAPT_OVL` | `5` | Minimum overlap for cutadapt matching |
 | `ref` | `linearized_mtdna.fasta` | Reference FASTA |
-| `regions_bed` | `linearized_regions.bed` | BED used for annotation |
-| `SAFETY_QUAL` | 20 | Initial VCF QUAL threshold |
-| `STRICT_QUAL` | 60 | Stricter SNP-only QUAL threshold |
-| `MIN_DEPTH` | 10 | Minimum depth after calling |
-| `PILEUP_MAX_DEPTH` | 100000 | Maximum depth used by mpileup |
-| `BASEQ_MIN` | 20 | Minimum base quality for mpileup |
-| `MAPQ_MIN` | 20 | Minimum mapping quality for mpileup |
-| `EDGE_PROTECT` | 1 | Boundary rescue window for masking |
+| `regions_bed` | `linearized_regions.bed` | BED file used for annotation |
+| `ADAPTER_FILE` | auto-detected | Adapter/primer list for cutadapt |
+| `SAFETY_QUAL` | `20` | Initial VCF QUAL threshold |
+| `STRICT_QUAL` | `60` | Strict SNP QUAL threshold |
+| `MIN_DEPTH` | `10` | Minimum depth required after calling |
+| `PILEUP_MAX_DEPTH` | `100000` | Maximum mpileup depth |
+| `BASEQ_MIN` | `20` | Minimum base quality for mpileup |
+| `MAPQ_MIN` | `20` | Minimum mapping quality for mpileup |
+| `EDGE_PROTECT` | `1` | Defined in the scripts, but not actively applied by the current v36 trimming logic |
+| `DISCARD_WARN_PCT` | `5` | Defined threshold for warning use in future or external wrappers |
 
 ### ONT-specific parameters
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `MAX_LEN` | 1500 | Maximum read length retained before analysis |
-| `QS_MIN` | 10 | Minimum QS score from `qs:f:` tag |
+| `MAX_LEN` | `1500` | Maximum read length kept in the lensafe step |
+| `QS_MIN` | `10` | Minimum `qs:f:` score if present |
 | `mmi_index` | `${ref}.mmi` | Minimap2 index path |
 
 ### Illumina-specific parameters
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `MAX_LEN` | 3000 | Maximum read length retained before merging |
-| `READQ` | 20 | fastp qualified quality threshold |
-| `UNQUAL_PCT` | 40 | fastp unqualified percent limit |
-| `N_BASE_LIMIT` | 5 | Maximum allowed N bases |
+| `MAX_LEN` | `3000` | Maximum read length retained before merge |
+| `READQ` | `20` | fastp quality threshold for merged-read filtering |
+| `UNQUAL_PCT` | `40` | fastp unqualified percent limit |
+| `N_BASE_LIMIT` | `5` | Maximum allowed number of `N` bases |
 
 ---
 
-## Example Usage
+## Example usage
 
-### ONT with default settings
+### ONT with defaults
+
 ```bash
-./ONT_MITO_v32.sh /path/to/ont_fastqs
+./ONT_MITO_v36.sh /path/to/ont_fastqs
 ```
 
-### ONT with custom masking boundary rescue
+### ONT with custom QS and extra trimming
+
 ```bash
-export EDGE_PROTECT=2
-./ONT_MITO_v32.sh /path/to/ont_fastqs
+export QS_MIN=12
+export EXTRA_TRIM=5
+./ONT_MITO_v36.sh /path/to/ont_fastqs
 ```
 
-### Illumina with custom merge and trimming settings
+### Illumina with custom merge settings
+
 ```bash
 export READQ=25
 export UNQUAL_PCT=30
 export EXTRA_TRIM=5
-./ILM_MITO_v32.sh /path/to/illumina_fastqs
+./ILM_MITO_v36.sh /path/to/illumina_fastqs
+```
+
+### Custom reference and BED
+
+```bash
+export ref=/path/to/linearized_mtdna.fasta
+export regions_bed=/path/to/linearized_regions.bed
+export ADAPTER_FILE=/path/to/Updated_Adapter_Primer_List_Cutadapt_cleaned.txt
+./ONT_MITO_v36.sh /path/to/ont_fastqs
 ```
 
 ---
 
-## Software Requirements
+## Interpretation notes
 
-The following tools must be available in `PATH`.
+These pipelines are intentionally verbose in their outputs.
 
-### Common
-- bash
-- fastqc
-- cutadapt
-- samtools
-- bcftools
-- python3
-- awk
+That is not bloat. It is the point of the design.
 
-### ONT pipeline
-- fastplong
-- minimap2
+The large number of BAM and VCF outputs exists so you can answer practical questions such as:
 
-### Illumina pipeline
-- fastp
-- bwa-mem2
+- Did the variant disappear before or after annotation?
+- Did it disappear only in the trimmed track?
+- Was it removed because it was in a homopolymer region?
+- Was it removed by the strict SNP filter?
+- Did the trimmed track materially reduce average depth?
+- Did a read-retention step remove more data than expected?
+
+For that reason, the extra outputs should be viewed as:
+
+- **comparison outputs** for baseline versus trimmed behavior
+- **diagnostic outputs** for debugging read loss and variant loss
+- **review outputs** for separating strict review callsets from region-flagged callsets
 
 ---
 
-## Interpretation Notes
+## Important notes
 
-These pipelines are diagnostic by design.
-
-The **masked track** is the intended primary callset, while the **baseline track** and additional masked outputs are retained so that masking behavior can be checked against the unmasked data. This makes it possible to:
-
-- confirm that expected variants are still retained
-- identify potential masking-related dropout
-- inspect homopolymer and blacklist behavior
-- compare depth loss between masked and unmasked tracks
-- troubleshoot unexpected changes in final calls
-
-For routine downstream review, the file of primary interest is:
-
-- **`*_masked_snps.vcf`**
+1. These pipelines use **linearized coordinates**. If downstream interpretation needs original mtDNA positions, a separate post-processing coordinate-reversion step is still required.
+2. The variable `EDGE_PROTECT` is still present in both scripts, but the active v36 Python trimming logic uses direct tiled bounds and does **not** currently apply a dynamic edge-protection window.
+3. The v36 scripts name the second track `trimmed`, not `masked`. Older README text that refers to `masked_*` outputs is no longer accurate for the current version.
 
 ---
 
 ## Summary
 
-Version 32 is a **dual-track diagnostic mtDNA pipeline** for ONT and Illumina data that produces a masked and unmasked comparison framework around the same input sample.
+Version 36 documents a **dual-track, diagnostic mitochondrial DNA workflow** for ONT and Illumina data in which:
 
-Its main purpose is to support confident review of a masking-based calling strategy while preserving enough diagnostic output to validate the behavior of that strategy on real data.
+- preprocessing is platform-specific
+- alignment is performed against a linearized mtDNA reference
+- each sample is split into a baseline and a trimmed track
+- the trimmed track uses maximum-overlap amplicon assignment and CIGAR soft-clipping against tiled amplicon intervals
+- both tracks are called, filtered, annotated, and retained for side-by-side review
 
-## Important Note
-Results from the pipeline are based on linearized coordinates. To reveal the true positions of variants, they must be reverted back to their original locations using the post processing files provided.
+This makes the repository useful both for producing review-ready SNP callsets and for debugging how trimming and amplicon-boundary enforcement affect depth and variant retention.
