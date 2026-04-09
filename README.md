@@ -1,4 +1,4 @@
-# Mitochondrial DNA Diagnostic Split-Track Pipelines v36
+# Mitochondrial DNA Diagnostic Split-Track Pipelines
 
 ## Overview
 
