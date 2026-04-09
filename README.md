@@ -96,7 +96,7 @@ Uses `fastp` in paired mode before merging.
 
 Default:
 
-- `MAX_LEN=3000`
+- `MAX_LEN=1500`
 
 ---
 
@@ -543,7 +543,7 @@ The pipelines are designed to be configured through exported environment variabl
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `MAX_LEN` | `3000` | Maximum read length retained before merge |
+| `MAX_LEN` | `1500` | Maximum read length retained before merge |
 | `READQ` | `20` | fastp quality threshold for merged-read filtering |
 | `UNQUAL_PCT` | `40` | fastp unqualified percent limit |
 | `N_BASE_LIMIT` | `5` | Maximum allowed number of `N` bases |
