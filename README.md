@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository contains two mitochondrial DNA analysis pipelines built around the same **diagnostic split-track design**:
+This repository contains two mitochondrial DNA analysis pipelines built for control/hypervariable region using PowerSeq® CRM Nested System, Custom kit. It features a **diagnostic split-track design**:
 
 - `ONT_MITO_v36.sh` for Oxford Nanopore Technologies data
 - `ILM_MITO_v36.sh` for Illumina paired-end data
