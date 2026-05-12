@@ -64,41 +64,6 @@ cd MARK
 
 Ensure all required dependencies are installed and available in your system `PATH`.
 
----
-
-## Dependencies
-
-### Python
-
-- Python 3
-- Biopython
-- tkinter
-
-### Core System and Bioinformatics Tools
-
-- bash
-- awk
-- samtools
-- bcftools
-- cutadapt
-- fastqc
-
-### ONT Pipeline
-
-Required for `MARK.sh`:
-
-- minimap2
-- fastplong
-
-### Illumina Pipeline
-
-Required for `MARK-I.sh`:
-
-- bwa-mem2
-- fastp
-
----
-
 ## Usage
 
 Launch the interactive dashboard:
@@ -226,7 +191,5 @@ Exact folder names may vary depending on the run timestamp and selected pipeline
 ---
 
 ## Notes
-
-MARK is intended for research and forensic-development workflows involving targeted mitochondrial control-region sequencing. The split-track structure is designed to make the effect of amplicon-boundary enforcement transparent, rather than hiding intermediate behavior.
 
 The baseline and trimmed tracks should be reviewed together when assessing variant behavior, especially in difficult regions such as homopolymers, amplicon overlaps, and primer-proximal positions.
