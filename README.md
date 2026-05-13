@@ -202,4 +202,4 @@ Exact folder names may vary depending on the run timestamp and selected pipeline
 
 The baseline and trimmed tracks should be reviewed together when assessing variant behavior, especially in difficult regions such as homopolymers, amplicon overlaps, and primer-proximal positions.
 
-A test input fastq has been provided to test the pipeline with 'Test_M.fastq'.
+An ONT test input fastq has been provided to test the pipeline with 'Test_M.fastq'.
