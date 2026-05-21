@@ -57,7 +57,7 @@ Both pipelines map reads to a **linearized mitochondrial reference** and split t
 
 ## Installation (Recommended)
 
-**MARK** is officially distributed as an Anaconda package. This is the easiest way to install the dashboard, pipelines, and all required dependencies (Python, FastP, BWA-MEM2, BCFTools, etc.) in a single step.
+**MARK** is officially distributed as an Anaconda package. This is the easiest way to install the dashboard, pipelines, and all required dependencies (Python, FastP, fastplong, minimap2, BWA-MEM2, BCFTools, cutadapt, FastQC, samtools, etc.) in a single step.
 
 ```bash
 conda install -c akmartian mark_pipeline -c conda-forge -c bioconda
@@ -74,7 +74,13 @@ cd MARK
 
 ## Usage
 
-Launch the interactive dashboard:
+Launch the interactive dashboard. After installing via Anaconda, `MARKLaunch.py` is on your `PATH` and can be run directly:
+
+```bash
+MARKLaunch.py
+```
+
+When running from a cloned source folder, launch it with Python from inside that folder:
 
 ```bash
 python3 MARKLaunch.py
@@ -169,19 +175,19 @@ MARK follows the general workflow below:
 
 ## Output Structure
 
-The pipeline generates organized output folders containing BAM, VCF, QC, and post-processed files.
+Each run creates a timestamped output folder (e.g. `MARK_<input>_<timestamp>_output/`), with one subfolder per sample. The post-processing steps then organize and finalize the results.
 
 Typical outputs include:
 
 ```text
-MARK_output/
-├── sorted_bams/
-├── vcfs/
-├── corrected_vcfs/
-├── cleaned_bams/
-├── final_collection/
-├── fastqc_reports/
-└── logs/
+MARK_<input>_<timestamp>_output/
+├── <sample>/                  # per-sample intermediates, QC, logs, and VCFs
+├── sorted_bams/               # collected baseline/trimmed sorted BAMs
+├── vcfs/                      # collected raw and filtered VCFs
+├── run_summary.txt            # per-stage read-retention summary
+└── Final_Pipeline_Results/
+    ├── corrected_vcfs/        # VCFs converted back to circular rCRS coordinates
+    └── cleaned_bams/          # header-cleaned BAMs
 ```
 
 Exact folder names may vary depending on the run timestamp and selected pipeline.
@@ -202,4 +208,4 @@ Exact folder names may vary depending on the run timestamp and selected pipeline
 
 The baseline and trimmed tracks should be reviewed together when assessing variant behavior, especially in difficult regions such as homopolymers, amplicon overlaps, and primer-proximal positions.
 
-An ONT test input fastq has been provided to test the pipeline with 'Test_M.fastq'.
+An ONT test input fastq has been provided to test the dashboard with, use the MARK.sh pipeline and with this file 'Test_M.fastq'.
