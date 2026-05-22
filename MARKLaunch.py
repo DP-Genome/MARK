@@ -49,7 +49,7 @@ class Theme:
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK — Mitochondrial Amplicon Resolving Kit  v5.2-global-scrollfix")
+        self.root.title("MARK — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
