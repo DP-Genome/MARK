@@ -14,12 +14,12 @@ These programs are not standalone replacements for the main pipelines. They are 
 
 ## Included Programs
 
-- `MitoPipelineDashboardv4.7.py`
+- `MARKLaunch.py`
 - `VCF_OrganizerApp.py`
 - `vcf_compare_guiv3.py`
 - `SequenceAnalyzerApp_v3.py`
 
-They were documented based directly on the uploaded source files. The dashboard logic comes from `MitoPipelineDashboardv4.7.py`, the VCF comparison logic from `vcf_compare_guiv3.py`, the organization utility from `VCF_OrganizerApp.py`, and the sequence progression analyzer from `SequenceAnalyzerApp_v3.py`.
+They were documented based directly on the uploaded source files. The dashboard logic comes from `MARKLaunch.py`, the VCF comparison logic from `vcf_compare_guiv3.py`, the organization utility from `VCF_OrganizerApp.py`, and the sequence progression analyzer from `SequenceAnalyzerApp_v3.py`.
 
 ---
 
@@ -27,7 +27,7 @@ They were documented based directly on the uploaded source files. The dashboard 
 
 The tools fit together in the following order:
 
-1. **Run the main pipeline** with `MitoPipelineDashboardv4.7.py`.
+1. **Run the main pipeline** with `MARKLaunch.py`.
 2. **Organize raw outputs, correct VCF positions, clean BAM headers, and gather final results** using the dashboard’s post-processing tab or full auto cycle.
 3. **Organize corrected VCFs by biological sample or barcode group** using `VCF_OrganizerApp.py`.
 4. **Compare concordance across VCFs** using `vcf_compare_guiv3.py`.
@@ -37,7 +37,7 @@ That is the main logic behind the toolkit. One program runs and standardizes the
 
 ---
 
-## 1. MitoPipelineDashboardv4.7.py
+## 1. MARKLaunch.py
 
 ### Purpose
 
@@ -97,7 +97,7 @@ The post-processing tab is broken into four steps:
 Run the GUI:
 
 ```bash
-python3 MitoPipelineDashboardv4.7.py
+python3 MARKLaunch.py
 ```
 
 Typical use:
@@ -108,6 +108,13 @@ Typical use:
 4. Leave parameters at script defaults unless you want to override specific values.
 5. Click **RUN PIPELINE ONLY** if you want only the shell pipeline.
 6. Click **RUN PIPELINE & POST-PROCESSING (AUTO)** if you want the full workflow in one pass.
+
+**Important Note for CLI Pipeline Users:**
+If you ran the `MARK.sh` or `MARK-I.sh` pipelines directly from the terminal without using the dashboard, you will only have raw uncorrected outputs. To obtain the final results, you must open `MARKLaunch.py`, go to **Step 2: Post-Processing**, and manually run Steps 1 through 4 in order:
+1. **Run Step 1** (Organize Raw Output) on your raw output folder.
+2. **Run Step 2** (Linear VCF Correction) on the newly created `vcfs/` folder.
+3. **Run Step 3** (BAM Header Cleaning) on the newly created `sorted_bams/` folder.
+4. **Run Step 4** (Final Collection) on the root output folder to gather the final corrected files.
 
 ### Important notes
 
@@ -337,7 +344,7 @@ Use this tool when you want to understand:
 
 A practical use case for the full set of tools would look like this:
 
-1. Run `ONT_MITO_v36.sh` or `ILM_MITO_v36.sh` through `MitoPipelineDashboardv4.7.py`.
+1. Run `ONT_MITO_v36.sh` or `ILM_MITO_v36.sh` through `MARKLaunch.py`.
 2. Let the dashboard auto-run post-processing so you end up with corrected VCFs and cleaned BAMs in `Final_Pipeline_Results/`.
 3. Use `VCF_OrganizerApp.py` to group corrected trimmed-track VCFs by biological sample such as `2800M`, `007`, or other sample identities.
 4. Use `vcf_compare_guiv3.py` to compare triplicates or cross-platform callsets and identify consensus, discordant, and singleton variants.
@@ -380,7 +387,7 @@ The dashboard’s post-processing relies on tools such as:
 
 ## Known Limitations and Notes
 
-- `MitoPipelineDashboardv4.7.py`  defaults to the current script released path that are assumed to be in the same directory as the program itself. If using a different script, it should be pointed to manually.
+- `MARKLaunch.py`  defaults to the current script released path that are assumed to be in the same directory as the program itself. If using a different script, it should be pointed to manually.
 - `VCF_OrganizerApp.py` depends entirely on filename conventions and a correct mapping JSON. If the sample identifiers in filenames are inconsistent, organization will be unreliable.
 - `vcf_compare_guiv3.py` compares by parsed VCF position and alleles. It is useful for concordance analysis, but it is not a truth-evaluation engine with sensitivity and specificity metrics.
 
@@ -390,7 +397,7 @@ The dashboard’s post-processing relies on tools such as:
 
 These four helper programs form the supporting software layer around the mitochondrial pipeline.
 
-- `MitoPipelineDashboardv4.7.py` runs the pipeline and standardizes outputs.
+- `MARKLaunch.py` runs the pipeline and standardizes outputs.
 - `VCF_OrganizerApp.py` groups corrected VCFs into meaningful collections.
 - `vcf_compare_guiv3.py` measures agreement and disagreement across VCF files.
 - `SequenceAnalyzerApp_v3.py` explains read-level progression from raw data to alignment.

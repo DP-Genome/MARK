@@ -94,6 +94,9 @@ python3 MARKLaunch.py
 
 The underlying bash pipelines (`MARK.sh` and `MARK-I.sh`) are fully standalone scripts. They can be executed directly from the terminal without the dashboard. This is useful for HPC environments, workflow managers, or users who prefer overriding parameters manually.
 
+**⚠️ IMPORTANT NOTE ON COMMAND LINE USAGE:**
+Running the pipeline scripts standalone **only produces the raw uncorrected outputs**. It does **not** automatically correct VCF positions to the circular reference, clean BAM headers, or organize the final files. To get the final corrected outputs, you must run the post-processing steps. You can do this by opening the `MARKLaunch.py` dashboard, navigating to the **Step 2: Post-Processing** tab, and running the steps sequentially on your output folder. Alternatively, you can use the **AUTO** feature in the dashboard to run the pipeline and post-processing together in one click.
+
 Run either script with `--help` to see all available override options:
 
 ```bash
