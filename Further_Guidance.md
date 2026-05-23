@@ -118,7 +118,7 @@ If you ran the `MARK.sh` or `MARK-I.sh` pipelines directly from the terminal wit
 
 ### Important notes
 
-- The default script path inside the program points to `ONT_MITO_v36.sh`, so for newer pipeline versions you should use **Browse & Load** and select the correct `.sh` file manually.
+- The default script path inside the program points to `MARK.sh`, so for other pipelines like `MARK-I.sh` you should use **Browse & Load** and select the correct `.sh` file manually.
 - The auto cycle is the most practical mode if you want one-button execution from raw pipeline run to cleaned final outputs.
 - The VCF coordinate correction assumes the mtDNA split position is `8284`.
 
@@ -344,7 +344,7 @@ Use this tool when you want to understand:
 
 A practical use case for the full set of tools would look like this:
 
-1. Run `ONT_MITO_v36.sh` or `ILM_MITO_v36.sh` through `MARKLaunch.py`.
+1. Run `MARK.sh` or `MARK-I.sh` through `MARKLaunch.py`.
 2. Let the dashboard auto-run post-processing so you end up with corrected VCFs and cleaned BAMs in `Final_Pipeline_Results/`.
 3. Use `VCF_OrganizerApp.py` to group corrected trimmed-track VCFs by biological sample such as `2800M`, `007`, or other sample identities.
 4. Use `vcf_compare_guiv3.py` to compare triplicates or cross-platform callsets and identify consensus, discordant, and singleton variants.
