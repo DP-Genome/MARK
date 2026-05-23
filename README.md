@@ -76,7 +76,7 @@ python3 MARKLaunch.py
 
 **MARK** can be driven via the interactive GUI dashboard or run entirely from the command line for automation and advanced usage.
 
-### Using the GUI Dashboard (Recommended for Beginners)
+### Using the GUI Dashboard
 
 Launch the interactive dashboard. After installing via Anaconda, `MARKLaunch.py` is on your `PATH` and can be run directly:
 
@@ -90,7 +90,7 @@ When running from a cloned source folder, launch it with Python from inside that
 python3 MARKLaunch.py
 ```
 
-### Using the Command Line (For Automation & Advanced Users)
+### Using the Command Line
 
 The underlying bash pipelines (`MARK.sh` and `MARK-I.sh`) are fully standalone scripts. They can be executed directly from the terminal without the dashboard. This is useful for HPC environments, workflow managers, or users who prefer overriding parameters manually.
 
