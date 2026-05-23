@@ -36,7 +36,9 @@ MARKLaunch.py
 
 ## 3. Usage Example (ONT Data Test)
 
-Here is a quick example of how to run the pipeline on your FastQ data.
+**Note:** The core pipelines (`MARK.sh` and `MARK-I.sh`) are fully standalone scripts. They can be executed natively in the terminal without a graphical interface. This is ideal for HPC environments, workflow automation, or overriding parameters manually. If you prefer a visual interface, you can optionally launch the GUI dashboard using `MARKLaunch.py`.
+
+Here is a quick example of how to run the pipeline on your FastQ data using the command line.
 
 ```bash
 # 1. Create a working directory and an input folder for your FASTQ files
