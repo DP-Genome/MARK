@@ -220,4 +220,4 @@ The corrected cleaned VCF files in `Final_Pipeline_Results/corrected_vcfs/` are 
 
 ## Citation
 If you use MARK, please cite this repository:
-Khalid A. MARK: Mitochondrial Amplicon Resolving Kit. GitHub repository. https://github.com/AKMARTIAN/MARK
+Omar, Ahmed K A. MARK: Mitochondrial Amplicon Resolving Kit. GitHub repository. https://github.com/AKMARTIAN/MARK
