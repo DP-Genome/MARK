@@ -1,0 +1,39 @@
+package:
+  name: mark_pipeline
+  version: "1.1"
+
+source:
+  path: ..
+
+build:
+  number: 0
+  noarch: generic
+
+requirements:
+  host:
+    - python=3.10
+  run:
+    - python=3.10
+    - tk
+    - biopython
+    - pandas
+    - numpy<2.0
+    - matplotlib
+    - fastp
+    - fastplong
+    - fastqc
+    - cutadapt
+    - bwa-mem2
+    - minimap2
+    - samtools
+    - bcftools
+
+test:
+  commands:
+    - MARK.sh --help || true
+
+about:
+  home: https://github.com/AKMARTIAN/MARK
+  license: MIT
+  summary: "MARK: Mitochondrial Amplicon Resolving Kit. For variant calling of
+    Mitochondria's Hypervariable region"

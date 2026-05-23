@@ -12,6 +12,8 @@ MARK adapts Illumina-based chemistry workflows for both **Illumina** and **Oxfor
 
 MARK includes an automated Python GUI dashboard:
 
+![MARK Launch Dashboard](Screenshot_MARK_Dashboard.png)
+
 ```bash
 MARKLaunch.py
 ```
@@ -55,20 +57,18 @@ Both pipelines map reads to a **linearized mitochondrial reference** and split t
 
 ---
 
-## Installation (Recommended)
+## Installation
 
-**MARK** is officially distributed as an Anaconda package. This is the easiest way to install the dashboard, pipelines, and all required dependencies (Python, FastP, fastplong, minimap2, BWA-MEM2, BCFTools, cutadapt, FastQC, samtools, etc.) in a single step.
+MARK can be installed through Conda when the package is available, or run directly from the GitHub source.
 
+**Tested Installation:**
 ```bash
-conda install -c akmartian mark_pipeline -c conda-forge -c bioconda
-```
-
-*Alternatively, you can install from the source by cloning this repository:*
-```bash
-git clone https://github.com/akmartian/MARK.git
+conda create -n mark_env -c conda-forge -c bioconda python=3.10 biopython fastp fastplong minimap2 bwa-mem2 bcftools cutadapt fastqc samtools -y
+conda activate mark_env
+git clone https://github.com/AKMARTIAN/MARK.git
 cd MARK
+python3 MARKLaunch.py
 ```
-*(If installing from source, ensure all required dependencies are manually installed and available in your system `PATH`).*
 
 ---
 
@@ -208,4 +208,16 @@ Exact folder names may vary depending on the run timestamp and selected pipeline
 
 The baseline and trimmed tracks should be reviewed together when assessing variant behavior, especially in difficult regions such as homopolymers, amplicon overlaps, and primer-proximal positions.
 
-An ONT test input fastq has been provided to test the dashboard with, use the MARK.sh pipeline and with this file 'Test_M.fastq'.
+An ONT test input fastq has been provided to test the pipeline with 'Test_M.fastq'.
+
+---
+
+## Recommended Output for Interpretation
+
+The corrected cleaned VCF files in `Final_Pipeline_Results/corrected_vcfs/` are the main files intended for downstream comparison and review. Intermediate VCFs are retained for transparency and troubleshooting.
+
+---
+
+## Citation
+If you use MARK, please cite this repository:
+Khalid A. MARK: Mitochondrial Amplicon Resolving Kit. GitHub repository. https://github.com/AKMARTIAN/MARK
