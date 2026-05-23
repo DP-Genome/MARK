@@ -9,9 +9,9 @@ cp MARK-I.sh $PREFIX/bin/ || echo "Warning: MARK-I.sh not found"
 
 # Copy the Python GUI and scripts
 cp MARKLaunch.py $PREFIX/bin/ || echo "Warning: MARKLaunch.py not found"
-cp post_processing/SequenceAnalyzerApp_v3.py $PREFIX/bin/ || true
-cp post_processing/vcf_compare_guiv3.py $PREFIX/bin/ || true
-cp post_processing/VCF_OrganizerApp.py $PREFIX/bin/ || true
+cp SequenceAnalyzerApp_v3.py $PREFIX/bin/ || true
+cp vcf_compare_guiv3.py $PREFIX/bin/ || true
+cp VCF_OrganizerApp.py $PREFIX/bin/ || true
 
 # Copy necessary reference files so the GUI can find them automatically
 cp linearized_mtdna.fasta $PREFIX/bin/ || echo "Warning: Fasta missing"
