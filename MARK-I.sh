@@ -13,7 +13,10 @@
 
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
+VERSION="1.1"
+
+if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+  echo "MARK-I Pipeline v$VERSION"
   echo "Usage: $0 <input_fastq_folder>"
   exit 1
 fi
