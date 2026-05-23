@@ -5,10 +5,6 @@
 # PURPOSE
 # ---------------------------------------------------------------------------
 # Illumina Merged-Read Diagnostic Split-Track Pipeline for mitochondrial data.
-# 
-# CHANGES in v36:
-# - Fixed 1bp gap on the left border of amplicons (0-based conversion constraint).
-# - Retains v34/v35 CIGAR soft-clipping and maximum overlap logic.
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
@@ -324,7 +320,7 @@ do
   samtools view -h "$bam_initial" | python3 -c '
 import os, sys, re
 
-# v36 perfectly tiled boundary protection
+# Perfectly tiled boundary protection
 amplicons = [
     ("Amp1", 7729, 7842),
     ("Amp2", 7832, 7941),
@@ -383,7 +379,7 @@ for line in sys.stdin:
     ref_span = sum(int(n) for n, op in cigar_re.findall(cigar) if op in "MDN=X")
     ref_end = pos + ref_span
     
-    # --- V36: MAXIMUM OVERLAP AMPLICON ASSIGNMENT ---
+    # --- MAXIMUM OVERLAP AMPLICON ASSIGNMENT ---
     best_amp = None
     max_overlap = -1
     
