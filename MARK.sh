@@ -12,8 +12,27 @@ set -euo pipefail
 VERSION="1.1"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
-  echo "MARK Pipeline v$VERSION"
-  echo "Usage: $0 <input_fastq_folder>"
+  echo -e "MARK Pipeline (ONT) v$VERSION"
+  echo -e "Usage: $0 <input_fastq_folder>\n"
+  echo -e "DESCRIPTION:"
+  echo -e "  Diagnostic Split-Track Pipeline for Nanopore mitochondrial data."
+  echo -e "  This script relies on environment variables for configuration."
+  echo -e "\nCOMMON OVERRIDE VARIABLES (with defaults):"
+  echo -e "  threads=\"8\"              Number of CPU threads to use"
+  echo -e "  MIN_DEPTH=\"10\"           Minimum depth for variant calling"
+  echo -e "  QS_MIN=\"10\"              Minimum average read quality (fastplong)"
+  echo -e "  MIN_LEN=\"90\"             Minimum read length before trimming"
+  echo -e "  MAX_LEN=\"1500\"           Maximum read length (LENSAFE filter)"
+  echo -e "  MIN_LEN_POST=\"90\"        Minimum read length after trimming"
+  echo -e "  MAX_LEN_POST=\"300\"       Maximum read length after trimming"
+  echo -e "  EXTRA_TRIM=\"0\"           Extra bases to trim from both ends"
+  echo -e "  ref=\"linearized_mtdna.fasta\"     Reference FASTA file"
+  echo -e "  regions_bed=\"linearized_regions.bed\" Amplicon BED file"
+  echo -e "\nEXAMPLE EXECUTIONS:"
+  echo -e "  # Run with defaults:"
+  echo -e "  $0 /path/to/fastqs"
+  echo -e "\n  # Run overriding threads and minimum depth:"
+  echo -e "  threads=16 MIN_DEPTH=20 $0 /path/to/fastqs"
   exit 1
 fi
 
