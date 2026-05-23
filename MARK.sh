@@ -13,7 +13,7 @@ VERSION="1.1"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"
-  echo -e "Usage: $0 <input_fastq_folder>\n"
+  echo -e "Usage: MARK.sh <input_fastq_folder>\n"
   echo -e "DESCRIPTION:"
   echo -e "  Diagnostic Split-Track Pipeline for Nanopore mitochondrial data."
   echo -e "  This script relies on environment variables for configuration."
@@ -30,9 +30,9 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  regions_bed=\"linearized_regions.bed\" Amplicon BED file"
   echo -e "\nEXAMPLE EXECUTIONS:"
   echo -e "  # Run with defaults:"
-  echo -e "  $0 /path/to/fastqs"
+  echo -e "  MARK.sh /path/to/fastqs"
   echo -e "\n  # Run overriding threads and minimum depth:"
-  echo -e "  threads=16 MIN_DEPTH=20 $0 /path/to/fastqs"
+  echo -e "  threads=16 MIN_DEPTH=20 MARK.sh /path/to/fastqs"
   exit 1
 fi
 

@@ -12,8 +12,8 @@ set -euo pipefail
 VERSION="1.1"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
-  echo -e "MARK-I Pipeline (Illumina) v$VERSION"
-  echo -e "Usage: $0 <input_fastq_folder>\n"
+  echo -e "MARK Pipeline (Illumina) v$VERSION"
+  echo -e "Usage: MARK-I.sh <input_fastq_folder>\n"
   echo -e "DESCRIPTION:"
   echo -e "  Illumina Merged-Read Diagnostic Split-Track Pipeline for mitochondrial data."
   echo -e "  This script relies on environment variables for configuration."
@@ -30,9 +30,9 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  regions_bed=\"linearized_regions.bed\" Amplicon BED file"
   echo -e "\nEXAMPLE EXECUTIONS:"
   echo -e "  # Run with defaults:"
-  echo -e "  $0 /path/to/fastqs"
-  echo -e "\n  # Run overriding threads, fastp quality, and length:"
-  echo -e "  threads=16 READQ=25 MAX_LEN=1000 $0 /path/to/fastqs"
+  echo -e "  MARK-I.sh /path/to/fastqs"
+  echo -e "\n  # Run overriding threads, minimum quality, and max read length:"
+  echo -e "  threads=16 READQ=25 MAX_LEN=1000 MARK-I.sh /path/to/fastqs"
   exit 1
 fi
 
