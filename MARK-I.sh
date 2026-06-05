@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-VERSION="1.1"
+VERSION="1.1.3"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (Illumina) v$VERSION"
@@ -148,6 +148,7 @@ run_summary_file="$run_out/run_summary.txt"
   echo "## =============================================================================="
   echo "## Date Run       : $(date)"
   echo "## Pipeline Name  : $pipeline_name"
+  echo "## Pipeline Version: $VERSION"
   echo "## Input Folder   : $(realpath "$input_folder")"
   echo "## Threads        : $threads"
   echo "## Reference      : $(realpath "$ref")"
@@ -512,6 +513,156 @@ for line in sys.stdin:
     run_log bash -lc "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_trimmed' | bcftools filter -e 'RegionType=\"HP_Region\" || RegionType=\"Blacklist_Site\"' -Ov -o '$sample_out/${base}_trimmed_clean.vcf'"
     run_log bcftools filter -i 'RegionType="HP_Region"' -Ov -o "$sample_out/${base}_trimmed_homopolymers.vcf" "$vcf_annotated_trimmed"
     
+# =========================================================================
+# AUTOMATED HETEROPLASMY EXTRACTION (VAF)
+# =========================================================================
+echo "[Processing] Extracting heteroplasmy summary for $base..." | tee -a "$log_file"
+
+# Define the output path strictly inside the sample's timestamped folder
+het_output="$sample_out/${base}_final_sample_report.tsv"
+
+python3 -c '
+import sys
+import os
+import glob
+
+sample_dir = sys.argv[1]
+base_name = sys.argv[2]
+het_output = os.path.join(sample_dir, f"{base_name}_final_sample_report.tsv")
+
+def get_region(pos):
+    if 16024 <= pos <= 16365:
+        return "Control Region (HVI)", "16024-16365"
+    elif 73 <= pos <= 340:
+        return "Control Region (HVII)", "73-340"
+    elif 438 <= pos <= 574:
+        return "Control Region (HVIII)", "438-574"
+    else:
+        return "Coding Region", "Whole Genome"
+
+main_keywords = ["snps", "clean", "annotated_all", "indels", "qual_filtered"]
+
+main_variants = {}
+other_variants = {}
+
+vcf_files = glob.glob(os.path.join(sample_dir, "*.vcf"))
+
+def parse_vcf(vcf_path):
+    variants = {}
+    with open(vcf_path, "r") as f:
+        for line in f:
+            if line.startswith("#"):
+                continue
+            parts = line.strip().split("\t")
+            if len(parts) < 10:
+                continue
+            
+            chrom = parts[0]
+            lin_pos = int(parts[1])
+            ref = parts[3]
+            alt = parts[4]
+            fmt = parts[8].split(":")
+            sample_data = parts[9].split(":")
+            
+            try:
+                ad_idx = fmt.index("AD")
+                dp_idx = fmt.index("DP")
+                
+                ad_field = sample_data[ad_idx]
+                tot_dp = int(sample_data[dp_idx]) if sample_data[dp_idx] != "." else 0
+                
+                if tot_dp == 0:
+                    continue
+                    
+                ad_parts = ad_field.split(",")
+                ref_dp = int(ad_parts[0]) if ad_parts[0] != "." else 0
+                alt_dp = int(ad_parts[1]) if len(ad_parts) > 1 and ad_parts[1] != "." else 0
+                
+                vaf = (alt_dp / tot_dp) * 100.0 if tot_dp > 0 else 0.0
+                
+                if 1.0 <= vaf <= 100.0:
+                    variant_key = f"{chrom}_{lin_pos}_{ref}_{alt}"
+                    variants[variant_key] = {
+                        "chrom": chrom,
+                        "lin_pos": lin_pos,
+                        "ref": ref,
+                        "alt": alt,
+                        "vaf": vaf
+                    }
+            except (ValueError, IndexError, ZeroDivisionError):
+                continue
+    return variants
+
+for vcf_file in vcf_files:
+    fname = os.path.basename(vcf_file).lower()
+    is_main = any(kw in fname for kw in main_keywords)
+    
+    parsed_vars = parse_vcf(vcf_file)
+    for k, v in parsed_vars.items():
+        if is_main:
+            main_variants[k] = v
+        else:
+            other_variants[k] = v
+
+# Remove duplicates from other_variants that are already in main_variants
+for k in main_variants:
+    if k in other_variants:
+        del other_variants[k]
+
+with open(het_output, "w") as out:
+    def write_variants(var_dict):
+        sorted_vars = sorted(var_dict.values(), key=lambda x: x["lin_pos"])
+        for v in sorted_vars:
+            lin_pos = v["lin_pos"]
+            ref = v["ref"]
+            alt = v["alt"]
+            vaf = v["vaf"]
+            
+            real_pos = (lin_pos + 8284) % 16569
+            if real_pos == 0: real_pos = 16569
+            
+            region_name, range_cov = get_region(real_pos)
+            
+            disp_ref = ref
+            variant_called = ""
+            notes = ""
+            het_status = ""
+            
+            if len(ref) == 1 and len(alt) == 1:
+                disp_ref = ref
+                variant_called = f"m.{real_pos}{alt}"
+                notes = f"m.{real_pos}{ref}>{alt}"
+                het_status = f"Homoplasmic {vaf:.0f}%" if vaf > 95.0 else f"{vaf:.0f}% PHP"
+            elif len(ref) > len(alt):
+                del_seq = ref[len(alt):]
+                disp_ref = del_seq
+                del_start = real_pos + len(alt)
+                if len(del_seq) == 1:
+                    variant_called = f"m.{del_start}del"
+                else:
+                    del_end = del_start + len(del_seq) - 1
+                    variant_called = f"m.{del_start}_{del_end}del"
+                notes = "Deletion"
+                het_status = f"Homoplasmic {vaf:.0f}%" if vaf > 95.0 else f"{vaf:.0f}% LHP"
+            else:
+                disp_ref = "-"
+                ins_seq = alt[len(ref):]
+                variant_called = f"m.{real_pos}.1{ins_seq}"
+                notes = "Insertion"
+                het_status = f"Homoplasmic {vaf:.0f}%" if vaf > 95.0 else f"{vaf:.0f}% LHP"
+                
+            out.write(f"{region_name}\t{range_cov}\t{disp_ref}\t{variant_called}\t{het_status}\t{notes}\n")
+
+    out.write("### MAIN RESULTS ###\n")
+    out.write("Region / Locus\tRange Covered\trCRS Reference Nucleotide\tVariant Called\tHeteroplasmy % (VAF)\tNotes / HGVS Equivalent\n")
+    write_variants(main_variants)
+    
+    out.write("\n### OTHER OBSERVATIONS ###\n")
+    out.write("Region / Locus\tRange Covered\trCRS Reference Nucleotide\tVariant Called\tHeteroplasmy % (VAF)\tNotes / HGVS Equivalent\n")
+    write_variants(other_variants)
+
+' "$sample_out" "$base"
+
     rm -f "$sample_bed" "$sample_out/hdr.txt"
   fi
 
