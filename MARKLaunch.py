@@ -478,6 +478,7 @@ class MitoPipelineDashboard:
 
     def count_input_files(self, folder):
         if not os.path.exists(folder): return 0
+        if os.path.isfile(folder): return 1
 
         r1_count = 0
         se_count = 0
@@ -797,8 +798,14 @@ class MitoPipelineDashboard:
                   lambda: self.browse_file(self.adapter_path, [("Text", "*.txt")]))
 
         self.input_folder = tk.StringVar()
-        row_entry(io_frame, 3, "Input FASTQ Folder:", self.input_folder,
-                  lambda: self.browse_folder(self.input_folder))
+        ttk.Label(io_frame, text="Input FASTQ (File/Folder):", style="FieldLabel.TLabel").grid(
+            row=3, column=0, sticky='e', padx=6, pady=5)
+        ttk.Entry(io_frame, textvariable=self.input_folder).grid(row=3, column=1, sticky='ew', padx=6, pady=5)
+        
+        btn_frame_io = tk.Frame(io_frame, bg=Theme.CARD)
+        btn_frame_io.grid(row=3, column=2, padx=6, pady=5, sticky='w')
+        ttk.Button(btn_frame_io, text="File", width=6, command=lambda: self.browse_file(self.input_folder, [("FASTQ", "*.fastq *.fq *.fastq.gz *.fq.gz"), ("All", "*.*")])).pack(side='left', padx=(0, 2))
+        ttk.Button(btn_frame_io, text="Folder", width=8, command=lambda: self.browse_folder(self.input_folder)).pack(side='left')
 
         self.output_folder = tk.StringVar()
         row_entry(io_frame, 4, "Output Base Dir:", self.output_folder,

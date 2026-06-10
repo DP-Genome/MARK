@@ -9,11 +9,11 @@
 
 set -euo pipefail
 
-VERSION="1.1.3"
+VERSION="1.1.4"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"
-  echo -e "Usage: MARK.sh <input_fastq_folder>\n"
+  echo -e "Usage: MARK.sh <input_fastq_file_or_folder>\n"
   echo -e "DESCRIPTION:"
   echo -e "  Diagnostic Split-Track Pipeline for Nanopore mitochondrial data."
   echo -e "  This script relies on environment variables for configuration."
@@ -36,8 +36,8 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   exit 1
 fi
 
-input_folder="$1"
-[[ -d "$input_folder" ]] || { echo "Error: Input folder '$input_folder' not found."; exit 1; }
+input_path="$1"
+[[ -e "$input_path" ]] || { echo "Error: Input path '$input_path' not found."; exit 1; }
 
 # --- Configuration ---
 threads="${threads:-8}"
@@ -77,7 +77,7 @@ fi
 
 ADAPTER_FILE="${ADAPTER_FILE:-}"
 if [[ -z "$ADAPTER_FILE" ]]; then
-  main_dir="$(dirname "$input_folder")"
+  main_dir="$(dirname "$input_path")"
   if [[ -f "$main_dir/Updated_Adapter_Primer_List_Cutadapt_cleaned.txt" ]]; then
     ADAPTER_FILE="$main_dir/Updated_Adapter_Primer_List_Cutadapt_cleaned.txt"
   elif [[ -f "Updated_Adapter_Primer_List_Cutadapt_cleaned.txt" ]]; then
@@ -93,7 +93,7 @@ command -v fastplong >/dev/null 2>&1 || { echo "Error: fastplong not found."; ex
 
 # --- Output Folder Setup ---
 run_ts="$(date +%Y%m%d_%H%M%S)"
-input_name="$(basename "$input_folder")"
+input_name="$(basename "$input_path")"
 run_out="${pipeline_name}_${input_name}_${run_ts}_output"
 mkdir -p "$run_out"
 
@@ -143,7 +143,7 @@ run_summary_file="$run_out/run_summary.txt"
   echo "## Date Run       : $(date)"
   echo "## Pipeline Name  : $pipeline_name"
   echo "## Pipeline Version: $VERSION"
-  echo "## Input Folder   : $(realpath "$input_folder")"
+  echo "## Input Path     : $(realpath "$input_path")"
   echo "## Threads        : $threads"
   echo "## Reference      : $(realpath "$ref")"
   echo "## Regions BED    : $(realpath "$regions_bed")"
@@ -171,7 +171,13 @@ run_summary_file="$run_out/run_summary.txt"
   printf "sample\tstage\treads_in\treads_out\tdropped_reads\tdropped_pct\n"
 } > "$run_summary_file"
 
-for fq in "$input_folder"/*.fastq "$input_folder"/*.fastq.gz; do
+if [[ -d "$input_path" ]]; then
+  files=("$input_path"/*.fastq "$input_path"/*.fastq.gz)
+else
+  files=("$input_path")
+fi
+
+for fq in "${files[@]}"; do
   [[ -f "$fq" ]] || continue
   found_any=true
 
