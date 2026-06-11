@@ -402,7 +402,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=("Segoe UI", 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v5.0",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.1.4",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=("Segoe UI", 9)).pack(anchor='w', pady=(2, 0))
 
