@@ -345,12 +345,68 @@ class VCFCompareGUI(tk.Tk):
     #  LOGIC
     # =========================================================================
 
+    def _macos_choose_files(self, title="Select Files", filetypes=None):
+        import subprocess
+        extensions = []
+        if filetypes:
+            for label, ext_str in filetypes:
+                for part in ext_str.split():
+                    ext = part.replace("*.", "").replace("*", "").strip(".")
+                    if ext and ext != "*":
+                        extensions.append(ext)
+        
+        type_clause = ""
+        if extensions:
+            ext_list = ", ".join(f'"{e}"' for e in extensions)
+            type_clause = f" of type {{{ext_list}}}"
+            
+        as_script = (
+            f'set theFiles to choose file{type_clause} with prompt "{title}" '
+            'with multiple selections allowed\n'
+            'set posixPaths to {}\n'
+            'repeat with aFile in theFiles\n'
+            '    set end of posixPaths to POSIX path of aFile\n'
+            'end repeat\n'
+            'set oldTIDs to AppleScript\'s text item delimiters\n'
+            'set AppleScript\'s text item delimiters to "\\n"\n'
+            'set outText to posixPaths as string\n'
+            'set AppleScript\'s text item delimiters to oldTIDs\n'
+            'outText'
+        )
+        try:
+            res = subprocess.run(["osascript", "-e", as_script], capture_output=True, text=True)
+            if res.returncode == 0:
+                paths = [p.strip() for p in res.stdout.split('\n') if p.strip()]
+                return paths
+        except Exception:
+            pass
+        return None
+
+    def _macos_choose_folder(self, title="Select Folder"):
+        import subprocess
+        as_script = f'POSIX path of (choose folder with prompt "{title}")'
+        try:
+            res = subprocess.run(["osascript", "-e", as_script], capture_output=True, text=True)
+            if res.returncode == 0:
+                return res.stdout.strip()
+        except Exception:
+            pass
+        return None
+
     def browse_output(self):
-        d = filedialog.askdirectory()
+        import sys
+        if sys.platform == "darwin":
+            d = self._macos_choose_folder("Select Output Directory")
+        else:
+            d = filedialog.askdirectory()
         if d: self.output_dir.set(d)
 
     def add_files(self):
-        paths = filedialog.askopenfilenames(parent=self, title="Select VCFs")
+        import sys
+        if sys.platform == "darwin":
+            paths = self._macos_choose_files("Select VCFs", [("VCF files", "*.vcf *.vcf.gz")])
+        else:
+            paths = filedialog.askopenfilenames(parent=self, title="Select VCFs")
         if not paths: return
 
         if not self.output_dir.get():
@@ -363,7 +419,11 @@ class VCFCompareGUI(tk.Tk):
         self.status.set(f"Total files: {len(self.vcf_paths)}")
 
     def add_folder(self):
-        folder = filedialog.askdirectory(title="Select Folder")
+        import sys
+        if sys.platform == "darwin":
+            folder = self._macos_choose_folder("Select Folder")
+        else:
+            folder = filedialog.askdirectory(title="Select Folder")
         if not folder: return
 
         if not self.output_dir.get():

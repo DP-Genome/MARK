@@ -108,16 +108,58 @@ class VCFOrganizerApp(tk.Tk):
         if hasattr(self, 'update_idletasks'):
             self.update_idletasks()
 
+    def _macos_choose_file(self, title="Select File", filetypes=None):
+        import subprocess
+        extensions = []
+        if filetypes:
+            for label, ext_str in filetypes:
+                for part in ext_str.split():
+                    ext = part.replace("*.", "").replace("*", "").strip(".")
+                    if ext and ext != "*":
+                        extensions.append(ext)
+        if extensions:
+            ext_list = ", ".join(f'"{e}"' for e in extensions)
+            as_script = f'POSIX path of (choose file of type {{{ext_list}}} with prompt "{title}")'
+        else:
+            as_script = f'POSIX path of (choose file with prompt "{title}")'
+        try:
+            res = subprocess.run(["osascript", "-e", as_script], capture_output=True, text=True)
+            if res.returncode == 0:
+                return res.stdout.strip()
+        except Exception:
+            pass
+        return None
+
+    def _macos_choose_folder(self, title="Select Folder"):
+        import subprocess
+        as_script = f'POSIX path of (choose folder with prompt "{title}")'
+        try:
+            res = subprocess.run(["osascript", "-e", as_script], capture_output=True, text=True)
+            if res.returncode == 0:
+                return res.stdout.strip()
+        except Exception:
+            pass
+        return None
+
     def browse_input(self):
-        d = filedialog.askdirectory(title="Select Input Directory")
+        if sys.platform == "darwin":
+            d = self._macos_choose_folder("Select Input Directory")
+        else:
+            d = filedialog.askdirectory(title="Select Input Directory")
         if d: self.input_dir_var.set(d)
 
     def browse_output(self):
-        d = filedialog.askdirectory(title="Select Output Directory")
+        if sys.platform == "darwin":
+            d = self._macos_choose_folder("Select Output Directory")
+        else:
+            d = filedialog.askdirectory(title="Select Output Directory")
         if d: self.output_dir_var.set(d)
 
     def browse_mapping(self):
-        f = filedialog.askopenfilename(title="Select Mapping JSON", filetypes=[("JSON files", "*.json"), ("All files", "*.*")])
+        if sys.platform == "darwin":
+            f = self._macos_choose_file("Select Mapping JSON", [("JSON files", "*.json")])
+        else:
+            f = filedialog.askopenfilename(title="Select Mapping JSON", filetypes=[("JSON files", "*.json"), ("All files", "*.*")])
         if f: self.mapping_var.set(f)
 
     def get_vcf_files(self, input_dir, suffix):

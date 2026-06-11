@@ -504,13 +504,32 @@ class SequenceAnalyzerApp:
         self.log_text.see(tk.END)
         self.root.update_idletasks()
 
+    def _macos_choose_folder(self, title="Select Folder"):
+        import subprocess
+        as_script = f'POSIX path of (choose folder with prompt "{title}")'
+        try:
+            res = subprocess.run(["osascript", "-e", as_script], capture_output=True, text=True)
+            if res.returncode == 0:
+                return res.stdout.strip()
+        except Exception:
+            pass
+        return None
+
     def browse_input(self):
-        p = filedialog.askdirectory(title="Select input folder containing BAM/FASTQ files")
+        import sys
+        if sys.platform == "darwin":
+            p = self._macos_choose_folder("Select input folder containing BAM/FASTQ files")
+        else:
+            p = filedialog.askdirectory(title="Select input folder containing BAM/FASTQ files")
         if p:
             self.input_path.set(p)
 
     def browse_output(self):
-        p = filedialog.askdirectory(title="Select output folder")
+        import sys
+        if sys.platform == "darwin":
+            p = self._macos_choose_folder("Select output folder")
+        else:
+            p = filedialog.askdirectory(title="Select output folder")
         if p:
             self.output_path.set(p)
 

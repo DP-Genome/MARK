@@ -692,12 +692,18 @@ class MitoPipelineDashboard:
             return _active_scroll_canvas() or getattr(self, "_active_wheel_canvas", None)
 
         def _on_mousewheel(event):
+            if getattr(self, '_dialog_open', False):
+                return
             return _scroll(_target_canvas(event), _wheel_units(event))
 
         def _on_linux_up(event):
+            if getattr(self, '_dialog_open', False):
+                return
             return _scroll(_target_canvas(event), -3)
 
         def _on_linux_down(event):
+            if getattr(self, '_dialog_open', False):
+                return
             return _scroll(_target_canvas(event), 3)
 
         def _key_scroll(units):
@@ -787,7 +793,7 @@ class MitoPipelineDashboard:
 
         self.ref_path = tk.StringVar(value=self.get_def_path("linearized_mtdna.fasta"))
         row_entry(io_frame, 0, "Linear Ref (FASTA):", self.ref_path,
-                  lambda: self.browse_file(self.ref_path, [("FASTA", ("*.fasta", "*.fa"))]))
+                  lambda: self.browse_file(self.ref_path, [("FASTA", "*.fasta *.fa")]))
 
         self.bed_path = tk.StringVar(value=self.get_def_path("linearized_regions.bed"))
         row_entry(io_frame, 1, "Regions BED:", self.bed_path,
@@ -804,7 +810,7 @@ class MitoPipelineDashboard:
         
         btn_frame_io = tk.Frame(io_frame, bg=Theme.CARD)
         btn_frame_io.grid(row=3, column=2, padx=6, pady=5, sticky='w')
-        ttk.Button(btn_frame_io, text="File", width=6, command=lambda: self.browse_file(self.input_folder, [("FASTQ", ("*.fastq", "*.fq", "*.fastq.gz", "*.fq.gz")), ("All Files", "*")])).pack(side='left', padx=(0, 2))
+        ttk.Button(btn_frame_io, text="File", width=6, command=lambda: self.browse_file(self.input_folder, [("FASTQ", "*.fastq *.fq *.fastq.gz *.fq.gz"), ("All Files", "*")])).pack(side='left', padx=(0, 2))
         ttk.Button(btn_frame_io, text="Folder", width=8, command=lambda: self.browse_folder(self.input_folder)).pack(side='left')
 
         self.output_folder = tk.StringVar()
@@ -864,7 +870,24 @@ class MitoPipelineDashboard:
         self.log("Pipeline input fields cleared.")
 
     def browse_script(self):
-        path = filedialog.askopenfilename(filetypes=[("Shell Script", "*.sh")])
+        if sys.platform == "darwin":
+            path = self._macos_choose_file("Select Pipeline Script", [("Shell Script", "*.sh")])
+            if path:
+                self.script_path.set(path)
+                self.refresh_config_ui()
+                self.log(f"Loaded parameters from: {os.path.basename(path)}")
+            return
+
+        self._dialog_open = True
+        self.root.update()
+        try:
+            path = filedialog.askopenfilename(
+                filetypes=[("Shell Script", "*.sh")]
+            )
+        except Exception:
+            path = None
+        finally:
+            self._dialog_open = False
         if path:
             self.script_path.set(path)
             self.refresh_config_ui()
@@ -1017,14 +1040,14 @@ class MitoPipelineDashboard:
             row=0, column=0, sticky='e', padx=6, pady=4)
         ttk.Entry(frame_vcf, textvariable=self.vcf_mod_ref).grid(row=0, column=1, sticky='ew', padx=6)
         ttk.Button(frame_vcf, text="Browse",
-                   command=lambda: self.browse_file(self.vcf_mod_ref, [("FASTA", ("*.fasta", "*.fa"))])).grid(
+                   command=lambda: self.browse_file(self.vcf_mod_ref, [("FASTA", "*.fasta *.fa")])).grid(
             row=0, column=2, padx=6)
 
         ttk.Label(frame_vcf, text="Original Circular Ref:", style="FieldLabel.TLabel").grid(
             row=1, column=0, sticky='e', padx=6, pady=4)
         ttk.Entry(frame_vcf, textvariable=self.vcf_orig_ref).grid(row=1, column=1, sticky='ew', padx=6)
         ttk.Button(frame_vcf, text="Browse",
-                   command=lambda: self.browse_file(self.vcf_orig_ref, [("FASTA", ("*.fasta", "*.fa"))])).grid(
+                   command=lambda: self.browse_file(self.vcf_orig_ref, [("FASTA", "*.fasta *.fa")])).grid(
             row=1, column=2, padx=6)
 
         ttk.Label(frame_vcf, text="VCF Folder:", style="FieldLabel.TLabel").grid(
@@ -1443,13 +1466,76 @@ class MitoPipelineDashboard:
             mapping[lin] = orig
         return mapping
 
+    def _macos_choose_file(self, title="Select File", filetypes=None):
+        extensions = []
+        if filetypes:
+            for label, ext_str in filetypes:
+                for part in ext_str.split():
+                    ext = part.replace("*.", "").replace("*", "").strip(".")
+                    if ext and ext != "*":
+                        extensions.append(ext)
+        
+        if extensions:
+            ext_list = ", ".join(f'"{e}"' for e in extensions)
+            as_script = f'POSIX path of (choose file of type {{{ext_list}}} with prompt "{title}")'
+        else:
+            as_script = f'POSIX path of (choose file with prompt "{title}")'
+            
+        try:
+            res = subprocess.run(["osascript", "-e", as_script], capture_output=True, text=True)
+            if res.returncode == 0:
+                return res.stdout.strip()
+        except Exception:
+            pass
+        return None
+
+    def _macos_choose_folder(self, title="Select Folder"):
+        as_script = f'POSIX path of (choose folder with prompt "{title}")'
+        try:
+            res = subprocess.run(["osascript", "-e", as_script], capture_output=True, text=True)
+            if res.returncode == 0:
+                return res.stdout.strip()
+        except Exception:
+            pass
+        return None
+
     def browse_file(self, var, filetypes=[("All Files", "*.*")]):
-        p = filedialog.askopenfilename(filetypes=filetypes)
-        if p: var.set(p)
+        if sys.platform == "darwin":
+            p = self._macos_choose_file("Select File", filetypes)
+            if p:
+                var.set(p)
+            return
+
+        self._dialog_open = True
+        self.root.update()
+        try:
+            p = filedialog.askopenfilename(
+                filetypes=filetypes
+            )
+        except Exception:
+            p = None
+        finally:
+            self._dialog_open = False
+        if p:
+            var.set(p)
 
     def browse_folder(self, var):
-        p = filedialog.askdirectory()
-        if p: var.set(p)
+        if sys.platform == "darwin":
+            p = self._macos_choose_folder("Select Folder")
+            if p:
+                var.set(p)
+            return
+
+        self._dialog_open = True
+        self.root.update()
+        try:
+            p = filedialog.askdirectory()
+        except Exception:
+            p = None
+        finally:
+            self._dialog_open = False
+        if p:
+            var.set(p)
 
     def start_thread(self, func):
         def wrapper():
