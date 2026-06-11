@@ -508,6 +508,8 @@ def get_region(pos):
         return "Control Region (HVII)", "73-340"
     elif 438 <= pos <= 574:
         return "Control Region (HVIII)", "438-574"
+    elif (15990 <= pos <= 16569) or (1 <= pos <= 700):
+        return "Control Region", "Control Region"
     else:
         return "Coding Region", "Whole Genome"
 
