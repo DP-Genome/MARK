@@ -502,12 +502,12 @@ base_name = sys.argv[2]
 het_output = os.path.join(sample_dir, f"{base_name}_final_sample_report.tsv")
 
 def get_region(pos):
-    if 15990 <= pos <= 16569:
-        return "Control Region (HVI)", "15990-16569"
-    elif 1 <= pos <= 380:
-        return "Control Region (HVII)", "1-380"
-    elif 381 <= pos <= 700:
-        return "Control Region (HVIII)", "381-700"
+    if 16024 <= pos <= 16365:
+        return "Control Region (HVI)", "16024-16365"
+    elif 73 <= pos <= 340:
+        return "Control Region (HVII)", "73-340"
+    elif 438 <= pos <= 574:
+        return "Control Region (HVIII)", "438-574"
     else:
         return "Coding Region", "Whole Genome"
 
