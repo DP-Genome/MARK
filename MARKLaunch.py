@@ -787,7 +787,7 @@ class MitoPipelineDashboard:
 
         self.ref_path = tk.StringVar(value=self.get_def_path("linearized_mtdna.fasta"))
         row_entry(io_frame, 0, "Linear Ref (FASTA):", self.ref_path,
-                  lambda: self.browse_file(self.ref_path, [("FASTA", "*.fasta *.fa")]))
+                  lambda: self.browse_file(self.ref_path, [("FASTA", ("*.fasta", "*.fa"))]))
 
         self.bed_path = tk.StringVar(value=self.get_def_path("linearized_regions.bed"))
         row_entry(io_frame, 1, "Regions BED:", self.bed_path,
@@ -804,7 +804,7 @@ class MitoPipelineDashboard:
         
         btn_frame_io = tk.Frame(io_frame, bg=Theme.CARD)
         btn_frame_io.grid(row=3, column=2, padx=6, pady=5, sticky='w')
-        ttk.Button(btn_frame_io, text="File", width=6, command=lambda: self.browse_file(self.input_folder, [("FASTQ", "*.fastq *.fq *.fastq.gz *.fq.gz"), ("All", "*.*")])).pack(side='left', padx=(0, 2))
+        ttk.Button(btn_frame_io, text="File", width=6, command=lambda: self.browse_file(self.input_folder, [("FASTQ", ("*.fastq", "*.fq", "*.fastq.gz", "*.fq.gz")), ("All Files", "*")])).pack(side='left', padx=(0, 2))
         ttk.Button(btn_frame_io, text="Folder", width=8, command=lambda: self.browse_folder(self.input_folder)).pack(side='left')
 
         self.output_folder = tk.StringVar()
@@ -1017,14 +1017,14 @@ class MitoPipelineDashboard:
             row=0, column=0, sticky='e', padx=6, pady=4)
         ttk.Entry(frame_vcf, textvariable=self.vcf_mod_ref).grid(row=0, column=1, sticky='ew', padx=6)
         ttk.Button(frame_vcf, text="Browse",
-                   command=lambda: self.browse_file(self.vcf_mod_ref, [("FASTA", "*.fasta *.fa")])).grid(
+                   command=lambda: self.browse_file(self.vcf_mod_ref, [("FASTA", ("*.fasta", "*.fa"))])).grid(
             row=0, column=2, padx=6)
 
         ttk.Label(frame_vcf, text="Original Circular Ref:", style="FieldLabel.TLabel").grid(
             row=1, column=0, sticky='e', padx=6, pady=4)
         ttk.Entry(frame_vcf, textvariable=self.vcf_orig_ref).grid(row=1, column=1, sticky='ew', padx=6)
         ttk.Button(frame_vcf, text="Browse",
-                   command=lambda: self.browse_file(self.vcf_orig_ref, [("FASTA", "*.fasta *.fa")])).grid(
+                   command=lambda: self.browse_file(self.vcf_orig_ref, [("FASTA", ("*.fasta", "*.fa"))])).grid(
             row=1, column=2, padx=6)
 
         ttk.Label(frame_vcf, text="VCF Folder:", style="FieldLabel.TLabel").grid(
