@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-VERSION="1.1.4"
+VERSION="1.1.5"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"

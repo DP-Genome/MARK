@@ -1,12 +1,12 @@
 package:
   name: mark_pipeline
-  version: "1.1.4"
+  version: "1.1.5"
 
 source:
   path: ..
 
 build:
-  number: 5
+  number: 0
   noarch: generic
 
 requirements:
@@ -33,7 +33,7 @@ test:
     - MARK.sh --help || true
 
 about:
-  home: https://github.com/AKMARTIAN/MARK
+  home: https://github.com/DP-Genome/MARK
   license: MIT
   summary: "MARK: Mitochondrial Amplicon Resolving Kit. For variant calling of
     Mitochondria's Hypervariable region"

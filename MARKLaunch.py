@@ -8,6 +8,7 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading
 import re
 import signal
+from datetime import datetime
 
 try:
     from Bio import SeqIO
@@ -32,8 +33,9 @@ class Theme:
     PURPLE     = "#7A4FB5"   # Accent
 
     # Neutrals
-    BG         = "#F4F6FA"   # App background
+    BG         = "#EEF1F7"   # App background
     CARD       = "#FFFFFF"   # Card / frame background
+    CARD_ALT   = "#F7F9FC"   # Subtle zebra / inset background
     BORDER     = "#D5DCE5"
     TEXT       = "#1C2333"
     TEXT_MUTED = "#6B7280"
@@ -45,14 +47,29 @@ class Theme:
     OVERRIDE   = "#C62828"   # Red for "custom override" labels
     DISABLED   = "#9E9E9E"
 
+    # Platform-native fonts. "Segoe UI" only exists on Windows; on macOS/Linux
+    # Tk silently substitutes a generic (often unattractive) default. Picking a
+    # font that actually ships with the OS makes the whole UI look crisper.
+    if sys.platform == "darwin":
+        UI   = "Helvetica Neue"
+        MONO = "Menlo"
+    elif sys.platform.startswith("win"):
+        UI   = "Segoe UI"
+        MONO = "Consolas"
+    else:
+        UI   = "DejaVu Sans"
+        MONO = "DejaVu Sans Mono"
+
 
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.1 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.1.5 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
+        # Open maximized so the whole dashboard is visible without scrolling.
+        self.root.after(0, self._maximize_window)
 
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         self.logo_image = None  # keep a reference so Tk doesn't GC it
@@ -97,43 +114,78 @@ class MitoPipelineDashboard:
         content = tk.Frame(root, bg=Theme.BG)
         content.pack(fill='both', expand=True, padx=14, pady=(0, 10))
 
-        # Activity Log — packed FIRST at the bottom with a fixed height. Packing it
-        # before the notebook (and using side='bottom') ensures the notebook gets
-        # all the remaining vertical space, so the scrollable tabs always have
-        # room to render and the log doesn't squeeze them.
-        log_wrap = tk.Frame(content, bg=Theme.BG)
-        log_wrap.pack(side='bottom', fill='x', expand=False, pady=(8, 0))
+        # Lay the content out on a weighted grid: the notebook (row 0) keeps the
+        # lion's share, while the Activity Log (row 1) stretches to fill the space
+        # that used to sit empty between the tabs and the bottom of the window.
+        # Using grid weights (instead of a fixed-height bottom pack) means the log
+        # grows and shrinks with the window rather than leaving dead space.
+        content.grid_rowconfigure(0, weight=3)
+        content.grid_rowconfigure(1, weight=1)
+        content.grid_columnconfigure(0, weight=1)
 
-        log_header = tk.Frame(log_wrap, bg=Theme.NAVY, height=32)
-        log_header.pack(fill='x')
-        log_header.pack_propagate(False)
-        tk.Label(log_header, text="●  ACTIVITY LOG",
-                 bg=Theme.NAVY, fg="#FFFFFF",
-                 font=("Segoe UI", 9, "bold")).pack(side='left', padx=14)
-        tk.Label(log_header, text="real-time pipeline output",
-                 bg=Theme.NAVY, fg="#9DB0CC",
-                 font=("Segoe UI", 8, "italic")).pack(side='left', padx=4)
-
-        self.log_text = scrolledtext.ScrolledText(
-            log_wrap, height=4, state='disabled',
-            font=("Consolas", 9),
-            bg=Theme.LOG_BG, fg=Theme.LOG_FG,
-            insertbackground=Theme.LOG_FG,
-            relief='flat', borderwidth=0,
-            padx=10, pady=6
-        )
-        self.log_text.pack(fill='x', expand=False)
-
-        # Notebook — packed AFTER the log (in code) but it will fill the remaining
-        # top area because the log was placed at side='bottom'.
+        # --- Notebook (row 0) ---
         self.notebook = ttk.Notebook(content, style="Brand.TNotebook")
-        self.notebook.pack(expand=True, fill='both', pady=(8, 0))
+        self.notebook.grid(row=0, column=0, sticky='nsew', pady=(0, 8))
 
         self.tab_pipeline = ttk.Frame(self.notebook, style="Card.TFrame")
         self.tab_post = ttk.Frame(self.notebook, style="Card.TFrame")
 
         self.notebook.add(self.tab_pipeline, text="  Step 1 · Run Pipeline  ")
         self.notebook.add(self.tab_post, text="  Step 2 · Post-Processing  ")
+
+        # --- Activity Log (row 1) ---
+        # Outer frame doubles as a 1px hairline border (BORDER bg + 1px padding
+        # around the dark inner panel), giving the log a contained "card" look.
+        log_border = tk.Frame(content, bg=Theme.BORDER)
+        log_border.grid(row=1, column=0, sticky='nsew')
+
+        log_wrap = tk.Frame(log_border, bg=Theme.LOG_BG)
+        log_wrap.pack(fill='both', expand=True, padx=1, pady=1)
+
+        log_header = tk.Frame(log_wrap, bg=Theme.NAVY, height=34)
+        log_header.pack(fill='x')
+        log_header.pack_propagate(False)
+
+        # Left side: status dot + title + subtitle
+        head_left = tk.Frame(log_header, bg=Theme.NAVY)
+        head_left.pack(side='left', fill='y')
+        self.log_status_dot = tk.Label(head_left, text="●", bg=Theme.NAVY,
+                                       fg=Theme.GREEN, font=(Theme.UI, 11))
+        self.log_status_dot.pack(side='left', padx=(14, 7))
+        tk.Label(head_left, text="ACTIVITY LOG",
+                 bg=Theme.NAVY, fg="#FFFFFF",
+                 font=(Theme.UI, 9, "bold")).pack(side='left')
+        tk.Label(head_left, text="real-time pipeline output",
+                 bg=Theme.NAVY, fg="#9DB0CC",
+                 font=(Theme.UI, 8, "italic")).pack(side='left', padx=8)
+
+        # Right side: a clickable "Clear" control
+        clear_btn = tk.Label(log_header, text="Clear  ✕", bg=Theme.NAVY,
+                             fg="#9DB0CC", font=(Theme.UI, 8, "bold"),
+                             cursor="hand2")
+        clear_btn.pack(side='right', padx=14)
+        clear_btn.bind("<Button-1>", lambda _e: self.clear_log())
+        clear_btn.bind("<Enter>", lambda _e: clear_btn.config(fg="#FFFFFF"))
+        clear_btn.bind("<Leave>", lambda _e: clear_btn.config(fg="#9DB0CC"))
+
+        # Thin teal accent line under the header
+        tk.Frame(log_wrap, bg=Theme.TEAL, height=2).pack(fill='x')
+
+        self.log_text = scrolledtext.ScrolledText(
+            log_wrap, height=6, state='disabled',
+            font=(Theme.MONO, 9),
+            bg=Theme.LOG_BG, fg=Theme.LOG_FG,
+            insertbackground=Theme.LOG_FG,
+            relief='flat', borderwidth=0,
+            padx=12, pady=8
+        )
+        self.log_text.pack(fill='both', expand=True)
+
+        # Colour tags for timestamps and message severity.
+        self.log_text.tag_configure("time", foreground="#5C6B85")
+        self.log_text.tag_configure("success", foreground="#5BD66E")
+        self.log_text.tag_configure("warn", foreground="#F0A44B")
+        self.log_text.tag_configure("error", foreground="#FF6B6B")
 
         self.init_pipeline_tab()
         self.init_postproc_tab()
@@ -158,6 +210,31 @@ class MitoPipelineDashboard:
         self.refresh_config_ui()
 
     # =========================================================================
+    # WINDOW SIZING
+    # =========================================================================
+    def _maximize_window(self):
+        """Open the dashboard maximized in a cross-platform way."""
+        try:
+            self.root.update_idletasks()
+            if sys.platform.startswith("win"):
+                self.root.state("zoomed")
+            elif sys.platform == "darwin":
+                # macOS has no 'zoomed' state for Tk; size to the screen and
+                # leave a small margin for the menu bar / Dock.
+                sw = self.root.winfo_screenwidth()
+                sh = self.root.winfo_screenheight()
+                self.root.geometry(f"{sw}x{sh - 80}+0+30")
+            else:
+                try:
+                    self.root.attributes("-zoomed", True)
+                except tk.TclError:
+                    sw = self.root.winfo_screenwidth()
+                    sh = self.root.winfo_screenheight()
+                    self.root.geometry(f"{sw}x{sh - 60}+0+0")
+        except Exception:
+            pass
+
+    # =========================================================================
     # THEME / STYLE
     # =========================================================================
     def _apply_theme(self):
@@ -175,31 +252,31 @@ class MitoPipelineDashboard:
 
         # --- Labels ---
         style.configure("TLabel", background=Theme.BG, foreground=Theme.TEXT,
-                        font=("Segoe UI", 10))
+                        font=(Theme.UI, 10))
         style.configure("Card.TLabel", background=Theme.CARD, foreground=Theme.TEXT,
-                        font=("Segoe UI", 10))
+                        font=(Theme.UI, 10))
         style.configure("Muted.TLabel", background=Theme.CARD, foreground=Theme.TEXT_MUTED,
-                        font=("Segoe UI", 9, "italic"))
+                        font=(Theme.UI, 9, "italic"))
         style.configure("FieldLabel.TLabel", background=Theme.CARD, foreground=Theme.TEXT,
-                        font=("Segoe UI", 10))
+                        font=(Theme.UI, 10))
         style.configure("Bold.TLabel", background=Theme.CARD, foreground=Theme.NAVY,
-                        font=("Segoe UI", 10, "bold"))
+                        font=(Theme.UI, 10, "bold"))
 
         # --- LabelFrame (cards) ---
         style.configure("Card.TLabelframe", background=Theme.CARD,
                         bordercolor=Theme.BORDER, relief='solid', borderwidth=1,
                         padding=12)
         style.configure("Card.TLabelframe.Label", background=Theme.CARD,
-                        foreground=Theme.NAVY, font=("Segoe UI", 10, "bold"))
+                        foreground=Theme.NAVY, font=(Theme.UI, 10, "bold"))
 
         # --- Notebook ---
         style.configure("Brand.TNotebook", background=Theme.BG, borderwidth=0,
-                        tabmargins=[2, 6, 2, 0])
+                        tabmargins=[2, 8, 2, 0])
         style.configure("Brand.TNotebook.Tab",
-                        padding=[18, 9],
-                        font=("Segoe UI", 10, "bold"),
+                        padding=[22, 11],
+                        font=(Theme.UI, 11, "bold"),
                         background="#DCE3EE",
-                        foreground=Theme.NAVY,
+                        foreground=Theme.TEXT_MUTED,
                         borderwidth=0)
         style.map("Brand.TNotebook.Tab",
                   background=[("selected", Theme.CARD),
@@ -222,7 +299,7 @@ class MitoPipelineDashboard:
 
         # --- Default Button (secondary / browse) ---
         style.configure("TButton",
-                        font=("Segoe UI", 9),
+                        font=(Theme.UI, 9),
                         background="#E8EDF5",
                         foreground=Theme.NAVY,
                         bordercolor=Theme.BORDER,
@@ -235,7 +312,7 @@ class MitoPipelineDashboard:
 
         # --- Primary action button (navy) ---
         style.configure("Primary.TButton",
-                        font=("Segoe UI", 10, "bold"),
+                        font=(Theme.UI, 10, "bold"),
                         background=Theme.NAVY,
                         foreground="#FFFFFF",
                         padding=(18, 11),
@@ -250,7 +327,7 @@ class MitoPipelineDashboard:
 
         # --- Secondary action (teal) ---
         style.configure("Accent.TButton",
-                        font=("Segoe UI", 10, "bold"),
+                        font=(Theme.UI, 10, "bold"),
                         background=Theme.TEAL,
                         foreground="#FFFFFF",
                         padding=(18, 11),
@@ -265,7 +342,7 @@ class MitoPipelineDashboard:
 
         # --- Stop button (orange) ---
         style.configure("Danger.TButton",
-                        font=("Segoe UI", 10, "bold"),
+                        font=(Theme.UI, 10, "bold"),
                         background=Theme.ORANGE,
                         foreground="#FFFFFF",
                         padding=(18, 11),
@@ -280,7 +357,7 @@ class MitoPipelineDashboard:
 
         # --- Step button (small accent, used in post-processing) ---
         style.configure("Step.TButton",
-                        font=("Segoe UI", 9, "bold"),
+                        font=(Theme.UI, 9, "bold"),
                         background=Theme.GREEN,
                         foreground="#FFFFFF",
                         padding=(12, 6),
@@ -306,7 +383,11 @@ class MitoPipelineDashboard:
                         background=Theme.TEAL,
                         lightcolor=Theme.TEAL,
                         darkcolor=Theme.TEAL,
-                        thickness=18)
+                        thickness=22)
+
+        # Teal percentage readout that sits beside the progress status text.
+        style.configure("Pct.TLabel", background=Theme.CARD, foreground=Theme.TEAL,
+                        font=(Theme.UI, 11, "bold"))
 
     # =========================================================================
     # HEADER (logo + title bar)
@@ -389,32 +470,33 @@ class MitoPipelineDashboard:
             brand = tk.Frame(text_block, bg=Theme.NAVY)
             brand.pack(anchor='w')
             tk.Label(brand, text="M", bg=Theme.NAVY, fg="#FFFFFF",
-                     font=("Segoe UI", 28, "bold")).pack(side='left')
+                     font=(Theme.UI, 28, "bold")).pack(side='left')
             tk.Label(brand, text="A", bg=Theme.NAVY, fg=Theme.ORANGE,
-                     font=("Segoe UI", 28, "bold")).pack(side='left')
+                     font=(Theme.UI, 28, "bold")).pack(side='left')
             tk.Label(brand, text="R", bg=Theme.NAVY, fg="#FFFFFF",
-                     font=("Segoe UI", 28, "bold")).pack(side='left')
+                     font=(Theme.UI, 28, "bold")).pack(side='left')
             tk.Label(brand, text="K", bg=Theme.NAVY, fg=Theme.TEAL,
-                     font=("Segoe UI", 28, "bold")).pack(side='left')
+                     font=(Theme.UI, 28, "bold")).pack(side='left')
 
         tk.Label(text_block,
                  text="Mitochondrial Amplicon Resolving Kit",
                  bg=Theme.NAVY, fg="#FFFFFF",
-                 font=("Segoe UI", 14, "bold")).pack(anchor='w')
+                 font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.1.4",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.1.5",
                  bg=Theme.NAVY, fg="#9DB0CC",
-                 font=("Segoe UI", 9)).pack(anchor='w', pady=(2, 0))
+                 font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
         # Right-side status pill
         right = tk.Frame(header, bg=Theme.NAVY)
         right.pack(side='right', padx=22)
         tk.Label(right, text="Dashboard",
                  bg=Theme.NAVY, fg="#9DB0CC",
-                 font=("Segoe UI", 8, "bold")).pack(anchor='e')
-        tk.Label(right, text="● Ready",
-                 bg=Theme.NAVY, fg=Theme.GREEN,
-                 font=("Segoe UI", 10, "bold")).pack(anchor='e', pady=(2, 0))
+                 font=(Theme.UI, 8, "bold")).pack(anchor='e')
+        self.status_pill = tk.Label(right, text="● Ready",
+                                    bg=Theme.NAVY, fg=Theme.GREEN,
+                                    font=(Theme.UI, 10, "bold"))
+        self.status_pill.pack(anchor='e', pady=(2, 0))
 
         # Thin accent stripe under the header
         stripe = tk.Frame(self.root, bg=Theme.TEAL, height=3)
@@ -429,8 +511,27 @@ class MitoPipelineDashboard:
 
     def _log_internal(self, message):
         self.log_text.config(state='normal')
-        self.log_text.insert(tk.END, message + "\n")
+        # Dim timestamp prefix for every line.
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.log_text.insert(tk.END, f"{ts}  ", ("time",))
+        # Colour the message by a few simple severity keywords.
+        low = message.lower()
+        if any(k in low for k in ("error", "fail", "✗", "missing", "could not", "not found")):
+            tag = "error"
+        elif "warn" in low:
+            tag = "warn"
+        elif any(k in low for k in ("complete", "success", "done", "finished", "✓", "loaded")):
+            tag = "success"
+        else:
+            tag = None
+        self.log_text.insert(tk.END, message + "\n", (tag,) if tag else ())
         self.log_text.see(tk.END)
+        self.log_text.config(state='disabled')
+
+    def clear_log(self):
+        """Wipe the activity log (triggered by the header's Clear control)."""
+        self.log_text.config(state='normal')
+        self.log_text.delete('1.0', tk.END)
         self.log_text.config(state='disabled')
 
     def safe_show_info(self, title, message):
@@ -444,6 +545,9 @@ class MitoPipelineDashboard:
             if total > 0:
                 self.progress_bar['maximum'] = total
                 self.progress_bar['value'] = current
+
+                pct = int(min(max(current / total, 0), 1) * 100)
+                self.progress_pct.set(f"{pct}%")
 
                 if custom_text:
                     self.progress_var.set(custom_text)
@@ -459,6 +563,7 @@ class MitoPipelineDashboard:
                     self.progress_var.set(f"{text_prefix}: Sample {display_num} of {total}")
             else:
                 self.progress_bar.stop()
+                self.progress_pct.set("")
                 self.progress_var.set(custom_text if custom_text else f"{text_prefix}...")
 
         self.root.after(0, _update)
@@ -473,6 +578,14 @@ class MitoPipelineDashboard:
             self.btn_run_only.config(state=run_state)
             self.btn_run_auto.config(state=run_state)
             self.btn_stop.config(state=stop_state)
+
+            # Reflect the running state in the log dot and header status pill.
+            if getattr(self, "log_status_dot", None):
+                self.log_status_dot.config(fg=Theme.ORANGE if is_running else Theme.GREEN)
+            if getattr(self, "status_pill", None):
+                self.status_pill.config(
+                    text="● Running" if is_running else "● Ready",
+                    fg=Theme.ORANGE if is_running else Theme.GREEN)
 
         self.root.after(0, _update)
 
@@ -762,10 +875,23 @@ class MitoPipelineDashboard:
         ttk.Button(script_frame, text="Browse & Load",
                    command=self.browse_script).grid(row=0, column=2, padx=6)
 
+        # -- Two-column body: parameters on the left, I/O + run on the right.
+        # This keeps the whole Step-1 view inside one screen height.
+        columns = tk.Frame(outer, bg=Theme.CARD)
+        columns.pack(fill='both', expand=True)
+        columns.columnconfigure(0, weight=3, uniform='cols')
+        columns.columnconfigure(1, weight=2, uniform='cols')
+        columns.rowconfigure(0, weight=1)
+
+        left_col = tk.Frame(columns, bg=Theme.CARD)
+        left_col.grid(row=0, column=0, sticky='nsew', padx=(0, 7))
+        right_col = tk.Frame(columns, bg=Theme.CARD)
+        right_col.grid(row=0, column=1, sticky='nsew', padx=(7, 0))
+
         # -- 2. Parameter configuration ----
-        self.config_frame = ttk.LabelFrame(outer, text="  2. Parameter Configuration  ",
+        self.config_frame = ttk.LabelFrame(left_col, text="  2. Parameter Configuration  ",
                                            style="Card.TLabelframe")
-        self.config_frame.pack(fill='x', pady=(0, 10))
+        self.config_frame.pack(fill='both', expand=True)
 
         btn_frame = tk.Frame(self.config_frame, bg=Theme.CARD)
         btn_frame.pack(fill='x', pady=(0, 6))
@@ -779,7 +905,7 @@ class MitoPipelineDashboard:
         self.grid_frame.pack(fill='x', pady=(4, 0))
 
         # -- 3. Input & output ----
-        io_frame = ttk.LabelFrame(outer, text="  3. Input & Output Selection  ",
+        io_frame = ttk.LabelFrame(right_col, text="  3. Input & Output Selection  ",
                                   style="Card.TLabelframe")
         io_frame.pack(fill='x', pady=(0, 10))
         io_frame.columnconfigure(1, weight=1)
@@ -833,35 +959,43 @@ class MitoPipelineDashboard:
                    command=self.clear_pipeline_fields).grid(row=8, column=1, pady=(8, 0), sticky='w', padx=6)
 
         # -- Run buttons (prominent, colored) ----
-        run_btn_frame = tk.Frame(outer, bg=Theme.CARD)
-        run_btn_frame.pack(pady=(6, 8))
+        run_btn_frame = tk.Frame(right_col, bg=Theme.CARD)
+        run_btn_frame.pack(fill='x', pady=(2, 8))
 
         self.btn_run_only = ttk.Button(run_btn_frame, text="▶  RUN PIPELINE ONLY",
                                        style="Primary.TButton",
                                        command=lambda: self.start_thread(self.run_pipeline_wrapper))
-        self.btn_run_only.pack(side='left', padx=8)
+        self.btn_run_only.pack(fill='x', pady=(0, 6))
 
         self.btn_run_auto = ttk.Button(run_btn_frame, text="⚡  RUN PIPELINE + POST-PROCESSING (AUTO)",
                                        style="Accent.TButton",
                                        command=lambda: self.start_thread(self.run_automated_cycle))
-        self.btn_run_auto.pack(side='left', padx=8)
+        self.btn_run_auto.pack(fill='x', pady=(0, 6))
 
         self.btn_stop = ttk.Button(run_btn_frame, text="■  STOP RUN",
                                    style="Danger.TButton",
                                    command=self.stop_pipeline, state='disabled')
-        self.btn_stop.pack(side='left', padx=8)
+        self.btn_stop.pack(fill='x')
 
         # -- Progress ----
-        self.progress_frame = ttk.LabelFrame(outer, text="  Progress  ",
+        self.progress_frame = ttk.LabelFrame(right_col, text="  Progress  ",
                                              style="Card.TLabelframe")
         self.progress_frame.pack(fill='x', pady=(2, 0))
+
+        # Status text on the left, live percentage on the right.
+        prog_top = tk.Frame(self.progress_frame, bg=Theme.CARD)
+        prog_top.pack(fill='x', padx=4, pady=(2, 6))
+        self.progress_var = tk.StringVar(value="Idle")
+        ttk.Label(prog_top, textvariable=self.progress_var,
+                  style="Bold.TLabel").pack(side='left')
+        self.progress_pct = tk.StringVar(value="")
+        ttk.Label(prog_top, textvariable=self.progress_pct,
+                  style="Pct.TLabel").pack(side='right')
+
         self.progress_bar = ttk.Progressbar(self.progress_frame, orient='horizontal',
                                             mode='determinate', length=400,
                                             style="Brand.Horizontal.TProgressbar")
-        self.progress_bar.pack(fill='x', padx=4, pady=(4, 8))
-        self.progress_var = tk.StringVar(value="Idle")
-        ttk.Label(self.progress_frame, textvariable=self.progress_var,
-                  style="Bold.TLabel").pack(pady=(0, 4))
+        self.progress_bar.pack(fill='x', padx=4, pady=(0, 10))
 
     def clear_pipeline_fields(self):
         self.input_folder.set("")
@@ -902,7 +1036,7 @@ class MitoPipelineDashboard:
         headers = ["Parameter", "Script Default", "Your Manual Value", "Override?", "Final Value to Pass"]
         for col, text in enumerate(headers):
             tk.Label(self.grid_frame, text=text,
-                     font=("Segoe UI", 9, "bold"),
+                     font=(Theme.UI, 9, "bold"),
                      bg=Theme.CARD, fg=Theme.NAVY).grid(row=0, column=col, padx=10, pady=(4, 8), sticky='w')
 
         # subtle divider
@@ -916,16 +1050,16 @@ class MitoPipelineDashboard:
             clean_script_val = script_val.replace(" (Hardcoded)", "")
 
             # zebra striping for readability
-            row_bg = Theme.CARD if (row % 2 == 0) else "#FAFBFD"
+            row_bg = Theme.CARD if (row % 2 == 0) else Theme.CARD_ALT
 
             # parameter name
             tk.Label(self.grid_frame, text=f"{var}",
-                     font=("Segoe UI", 9, "bold"),
+                     font=(Theme.UI, 9, "bold"),
                      bg=row_bg, fg=Theme.TEXT).grid(row=row, column=0, sticky='ew', padx=6, pady=2, ipady=3)
 
             color = Theme.DISABLED if is_hardcoded else (Theme.SCRIPT_DEF if clean_script_val != "Not Found" else Theme.DISABLED)
             tk.Label(self.grid_frame, text=script_val,
-                     foreground=color, font=("Segoe UI", 9, "bold"),
+                     foreground=color, font=(Theme.UI, 9, "bold"),
                      bg=row_bg).grid(row=row, column=1, padx=6, sticky='ew', ipady=3)
 
             entry = ttk.Entry(self.grid_frame,
@@ -940,7 +1074,7 @@ class MitoPipelineDashboard:
             self.var_states[var]['chk_widget'] = chk
 
             final_lbl = tk.Label(self.grid_frame, text="",
-                                 font=("Consolas", 10, "bold"),
+                                 font=(Theme.MONO, 10, "bold"),
                                  bg=row_bg)
             final_lbl.grid(row=row, column=4, padx=14, sticky='ew', ipady=3)
             self.var_states[var]['final_label'] = final_lbl
@@ -1006,7 +1140,7 @@ class MitoPipelineDashboard:
         intro = tk.Label(outer,
                          text="Run any individual step, or use AUTO from Step 1 to run the full chain.",
                          bg=Theme.CARD, fg=Theme.TEXT_MUTED,
-                         font=("Segoe UI", 9, "italic"))
+                         font=(Theme.UI, 9, "italic"))
         intro.pack(anchor='w', pady=(0, 8))
 
         # 1. Organize Raw Output

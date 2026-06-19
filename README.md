@@ -65,7 +65,7 @@ MARK can be installed through Conda when the package is available, or run direct
 ```bash
 conda create -n mark_env -c conda-forge -c bioconda python=3.10 biopython fastp fastplong minimap2 bwa-mem2 bcftools cutadapt fastqc samtools -y
 conda activate mark_env
-git clone https://github.com/AKMARTIAN/MARK.git
+git clone https://github.com/DP-Genome/MARK.git
 cd MARK
 python3 MARKLaunch.py
 ```
@@ -238,4 +238,4 @@ The corrected cleaned VCF files in `Final_Pipeline_Results/corrected_vcfs/` are 
 
 ## Citation
 If you use MARK, please cite this repository:
-Omar, Ahmed K A. MARK: Mitochondrial Amplicon Resolving Kit. GitHub repository. https://github.com/AKMARTIAN/MARK
+Omar, Ahmed K A. MARK: Mitochondrial Amplicon Resolving Kit. GitHub repository. https://github.com/DP-Genome/MARK
