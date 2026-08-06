@@ -13,6 +13,7 @@ Notes:
 """
 
 import os
+import sys
 import glob
 import gzip
 import csv
@@ -21,7 +22,6 @@ from collections import defaultdict
 from datetime import datetime
 
 import numpy as np
-import pysam
 import matplotlib
 matplotlib.use('Agg', force=True)
 import matplotlib.pyplot as plt
@@ -29,6 +29,12 @@ import matplotlib.pyplot as plt
 import tkinter as tk
 from tkinter import filedialog, messagebox, font
 import tkinter.ttk as ttk
+
+try:
+    import pysam
+except ImportError:
+    messagebox.showerror("Missing Library", "pysam is not installed.\nPlease run: conda install -c bioconda pysam")
+    sys.exit(1)
 
 
 # -----------------------------

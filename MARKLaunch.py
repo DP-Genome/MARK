@@ -64,7 +64,7 @@ class Theme:
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.1.5 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.1.6 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -483,7 +483,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.1.5",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.1.6",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
