@@ -64,7 +64,7 @@ class Theme:
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.1.7 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.1.8 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -438,10 +438,13 @@ class MitoPipelineDashboard:
                 except ImportError:
                     # Fallback: native Tk. Note: tk.PhotoImage only handles PNGs
                     # on Tk 8.6+; some platforms still fail on certain PNGs.
+                    # Scale to the same target height as the Pillow branch above —
+                    # subsample only takes integer factors, so this lands close to
+                    # target_h rather than exactly on it.
                     self.logo_image = tk.PhotoImage(file=logo_path)
-                    w = self.logo_image.width()
-                    if w > 280:
-                        factor = max(2, w // 260)
+                    h = self.logo_image.height()
+                    if h > 90:
+                        factor = max(1, round(h / 90))
                         self.logo_image = self.logo_image.subsample(factor, factor)
 
                 tk.Label(header, image=self.logo_image, bg=Theme.NAVY,
@@ -483,7 +486,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.1.7",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.1.8",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
