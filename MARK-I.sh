@@ -21,9 +21,9 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  threads=\"8\"              Number of CPU threads to use"
   echo -e "  MIN_DEPTH=\"10\"           Minimum depth for variant calling"
   echo -e "  READQ=\"20\"               Quality score requirement (fastp)"
-  echo -e "  MIN_LEN=\"90\"             Minimum read length before trimming"
+  echo -e "  MIN_LEN=\"50\"             Minimum read length before trimming"
   echo -e "  MAX_LEN=\"1500\"           Maximum read length (LENSAFE filter)"
-  echo -e "  MIN_LEN_POST=\"90\"        Minimum read length after trimming"
+  echo -e "  MIN_LEN_POST=\"50\"        Minimum read length after trimming"
   echo -e "  MAX_LEN_POST=\"300\"       Maximum read length after trimming"
   echo -e "  EXTRA_TRIM=\"0\"           Extra bases to trim from both ends"
   echo -e "  ref=\"linearized_mtdna.fasta\"     Reference FASTA file"
@@ -52,8 +52,8 @@ DISCARD_WARN_PCT="${DISCARD_WARN_PCT:-5}"
 # fastp settings
 READQ="${READQ:-20}"
 UNQUAL_PCT="${UNQUAL_PCT:-40}"
-MIN_LEN="${MIN_LEN:-90}"
-MIN_LEN_POST="${MIN_LEN_POST:-90}"
+MIN_LEN="${MIN_LEN:-50}"
+MIN_LEN_POST="${MIN_LEN_POST:-50}"
 MAX_LEN_POST="${MAX_LEN_POST:-300}"
 N_BASE_LIMIT="${N_BASE_LIMIT:-5}"
 
@@ -280,7 +280,7 @@ for r1 in "${files[@]}"; do
 
   run_log fastp \
     -i "$lensafe_r1" -I "$lensafe_r2" \
-    --merge --include_unmerged \
+    --merge --include_unmerged --trim_poly_g \
     --merged_out "$merged_fq" \
     --qualified_quality_phred "$READQ" \
     --unqualified_percent_limit "$UNQUAL_PCT" \
