@@ -74,7 +74,9 @@ The pipeline tab lets you:
 - run the pipeline plus all post-processing automatically
 - stop a running job cleanly
 
-The output base directory is the folder the pipeline runs in; if it does not exist yet the dashboard creates it. The custom run name is passed to the pipeline as `RUN_NAME` and becomes the name of the output folder — it is reduced to a single safe path component, and a run will not start if a folder of that name already exists and is not empty. Leaving either field empty keeps the default behaviour: outputs are written next to the input folder, in `<PIPELINE>_<input>_<timestamp>_output`. `RUN_NAME` also works when calling `MARK.sh` / `MARK-I.sh` directly.
+The output base directory is the directory the run folder is created in, and is passed to the pipeline as `OUTPUT_DIR`; if it does not exist yet the dashboard creates it. The custom run name is passed as `RUN_NAME` and becomes the name of the run folder — it is reduced to a single safe path component, and a run will not start if a folder of that name already exists and is not empty.
+
+Leaving both fields empty gives the default: the run folder is created **beside the input**, as a sibling, named `<PIPELINE>_<input>_<timestamp>_output`. It is never created inside the input folder, and never in whatever directory the script happened to be launched from. Both `OUTPUT_DIR` and `RUN_NAME` work the same way when calling `MARK.sh` / `MARK-I.sh` directly from a terminal.
 
 The parameter grid includes values such as `MAX_LEN`, `QS_MIN`, `STRICT_QUAL`, `MIN_DEPTH`, `MIN_LEN`, `MIN_LEN_POST`, `MAX_LEN_POST`, `EXTRA_TRIM`, `READQ`, and `UNQUAL_PCT`. The dashboard only passes overrides for variables whose checkbox is enabled.
 

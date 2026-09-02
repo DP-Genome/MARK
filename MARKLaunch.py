@@ -1350,11 +1350,21 @@ class MitoPipelineDashboard:
         if run_name:
             env['RUN_NAME'] = run_name
 
-        exec_dir = out_base if out_base else os.path.dirname(inp)
+        # normpath strips the trailing separator the macOS folder chooser appends;
+        # without it os.path.dirname returns the input folder itself and the run
+        # lands inside the input rather than beside it.
+        if out_base:
+            exec_dir = os.path.abspath(os.path.normpath(out_base))
+        else:
+            exec_dir = os.path.dirname(os.path.abspath(os.path.normpath(inp)))
 
-        # The output base directory is the pipeline's working directory. Create it
-        # if the user typed a path that does not exist yet, and fail loudly rather
-        # than letting Popen raise a bare "No such file or directory".
+        # Tell the pipeline where to create the run folder rather than relying on
+        # the working directory, so the GUI and a direct CLI call agree.
+        env['OUTPUT_DIR'] = exec_dir
+
+        # The output base directory is also the pipeline's working directory.
+        # Create it if the user typed a path that does not exist yet, and fail
+        # loudly rather than letting Popen raise a bare "No such file or directory".
         try:
             os.makedirs(exec_dir, exist_ok=True)
         except OSError as e:
