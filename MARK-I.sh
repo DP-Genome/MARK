@@ -21,9 +21,9 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  threads=\"8\"              Number of CPU threads to use"
   echo -e "  MIN_DEPTH=\"10\"           Minimum depth for variant calling"
   echo -e "  READQ=\"20\"               Quality score requirement (fastp)"
-  echo -e "  MIN_LEN=\"50\"             Minimum read length before trimming"
+  echo -e "  MIN_LEN=\"90\"             Min RAW fragment length (validated floor; dropped)"
   echo -e "  MAX_LEN=\"1500\"           Maximum read length (LENSAFE filter)"
-  echo -e "  MIN_LEN_POST=\"50\"        Minimum read length after trimming"
+  echo -e "  MIN_LEN_POST=\"30\"        Mappability floor AFTER trimming (not the 90 bp filter)"
   echo -e "  MAX_LEN_POST=\"300\"       Maximum read length after trimming"
   echo -e "  EXTRA_TRIM=\"0\"           Extra bases to trim from both ends"
   echo -e "  ref=\"linearized_mtdna.fasta\"     Reference FASTA file"
@@ -52,8 +52,8 @@ DISCARD_WARN_PCT="${DISCARD_WARN_PCT:-5}"
 # fastp settings
 READQ="${READQ:-20}"
 UNQUAL_PCT="${UNQUAL_PCT:-40}"
-MIN_LEN="${MIN_LEN:-50}"
-MIN_LEN_POST="${MIN_LEN_POST:-50}"
+MIN_LEN="${MIN_LEN:-90}"
+MIN_LEN_POST="${MIN_LEN_POST:-30}"
 MAX_LEN_POST="${MAX_LEN_POST:-300}"
 N_BASE_LIMIT="${N_BASE_LIMIT:-5}"
 
@@ -196,8 +196,8 @@ run_summary_file="$run_out/run_summary.txt"
   echo "##"
   echo "## --- PRE-PROCESSING & TRIMMING ---"
   echo "## MAX_LEN        : $MAX_LEN"
-  echo "## FASTP MERGE    : READQ=$READQ | UNQUAL_PCT=$UNQUAL_PCT | MIN_LEN=$MIN_LEN"
-  echo "## MIXED MATCH    : ERR=$CUTADAPT_ERR | OVL=$CUTADAPT_OVL | MIN_LEN=$MIN_LEN "
+  echo "## FASTP MERGE    : READQ=$READQ | UNQUAL_PCT=$UNQUAL_PCT | MIN_LEN(raw)=$MIN_LEN"
+  echo "## MIXED MATCH    : ERR=$CUTADAPT_ERR | OVL=$CUTADAPT_OVL | MIN_LEN_POST=$MIN_LEN_POST "
   echo "## EXTRA_TRIM     : $EXTRA_TRIM"
   echo "## MAX_LEN_POST   : $MAX_LEN_POST"
   echo "## MIN_LEN_POST   : $MIN_LEN_POST"
@@ -299,14 +299,14 @@ for r1 in "${files[@]}"; do
   run_log fastqc "$merged_fq" -o "$sample_out" > /dev/null 2>&1
   
   t3="$sample_out/${base}_trim3.fastq"
-  run_log cutadapt -a "file:$ADAPTER_FILE" --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN" --cores "$threads" -o "$t3" "$merged_fq" >/dev/null
+  run_log cutadapt -a "file:$ADAPTER_FILE" --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" --cores "$threads" -o "$t3" "$merged_fq" >/dev/null
   t3_reads=$(count_fastq_reads "$t3")
   t3_drop=$((merged_reads - t3_reads))
   t3_pct=$(awk -v d="$t3_drop" -v i="$merged_reads" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')
   printf "%s\t2_Trim3\t%s\t%s\t%s\t%s%%\n" "$base" "$merged_reads" "$t3_reads" "$t3_drop" "$t3_pct" >> "$run_summary_file"
 
   t5="$sample_out/${base}_trim5.fastq"
-  run_log cutadapt -g "file:$ADAPTER_FILE" --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN" --cores "$threads" -o "$t5" "$t3" >/dev/null
+  run_log cutadapt -g "file:$ADAPTER_FILE" --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" --cores "$threads" -o "$t5" "$t3" >/dev/null
   t5_reads=$(count_fastq_reads "$t5")
   t5_drop=$((t3_reads - t5_reads))
   t5_pct=$(awk -v d="$t5_drop" -v i="$t3_reads" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')
@@ -314,7 +314,7 @@ for r1 in "${files[@]}"; do
   
   final_fq="$sample_out/${base}_trim5_u${EXTRA_TRIM}x2.fastq"
   if [[ "$EXTRA_TRIM" -gt 0 ]]; then
-    run_log cutadapt -u "$EXTRA_TRIM" -u "-$EXTRA_TRIM" --minimum-length "$MIN_LEN" --cores "$threads" -o "$final_fq" "$t5" >/dev/null
+    run_log cutadapt -u "$EXTRA_TRIM" -u "-$EXTRA_TRIM" --minimum-length "$MIN_LEN_POST" --cores "$threads" -o "$final_fq" "$t5" >/dev/null
   else
     ln -sf "$(basename "$t5")" "$final_fq"
   fi
