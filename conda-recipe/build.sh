@@ -16,7 +16,7 @@ cp VCF_OrganizerApp.py $PREFIX/bin/ || true
 # Copy necessary reference files so the GUI can find them automatically
 cp linearized_mtdna.fasta $PREFIX/bin/ || echo "Warning: Fasta missing"
 cp linearized_regions.bed $PREFIX/bin/ || echo "Warning: BED missing"
-cp Updated_Adapter_Primer_List_Cutadapt_cleaned.txt $PREFIX/bin/ || echo "Warning: Adapter missing"
+cp MARK_Adapter_List_v2.txt $PREFIX/bin/ || echo "Warning: Adapter missing"
 cp rCRS.fasta $PREFIX/bin/ || echo "Warning: rCRS missing"
 
 # Copy the demo test file
