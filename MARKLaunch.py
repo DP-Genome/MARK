@@ -64,7 +64,7 @@ class Theme:
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.1.8 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.1.9 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -486,7 +486,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.1.8",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.1.9",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
@@ -1293,6 +1293,35 @@ class MitoPipelineDashboard:
             self.update_progress_ui(1, 1, custom_text="Pipeline Failed.")
             self.safe_show_error("Error", "Pipeline Failed and no output folder detected.")
 
+    @staticmethod
+    def _find_run_output(exec_dir, launched_at, run_name=""):
+        """Locate the folder a run produced, when the pipeline did not report it.
+
+        Prefers an exact match on the custom run name, then the newest folder in
+        exec_dir created since the run started.
+        """
+        def from_this_run(path):
+            try:
+                return os.path.isdir(path) and os.path.getmtime(path) >= launched_at - 5
+            except OSError:
+                return False
+
+        if run_name:
+            direct = os.path.join(exec_dir, run_name)
+            if from_this_run(direct):
+                return direct
+        try:
+            candidates = []
+            for name in os.listdir(exec_dir):
+                path = os.path.join(exec_dir, name)
+                if from_this_run(path):
+                    candidates.append((os.path.getmtime(path), path))
+            if candidates:
+                return max(candidates)[1]
+        except OSError:
+            pass
+        return None
+
     def _execute_pipeline(self):
         script = self.script_path.get()
         inp = self.input_folder.get()
@@ -1317,8 +1346,29 @@ class MitoPipelineDashboard:
         if self.adapter_path.get():
             env['ADAPTER_FILE'] = self.adapter_path.get()
 
+        run_name = self.custom_run_name.get().strip()
+        if run_name:
+            env['RUN_NAME'] = run_name
+
         exec_dir = out_base if out_base else os.path.dirname(inp)
+
+        # The output base directory is the pipeline's working directory. Create it
+        # if the user typed a path that does not exist yet, and fail loudly rather
+        # than letting Popen raise a bare "No such file or directory".
+        try:
+            os.makedirs(exec_dir, exist_ok=True)
+        except OSError as e:
+            self.log(f"Error: cannot use output base directory '{exec_dir}': {e}")
+            self.safe_show_error("Output Folder",
+                                 f"Cannot create or write to the output base directory:\n\n{exec_dir}\n\n{e}")
+            return False, None
+
+        self.log(f"Output base directory: {exec_dir}")
+        if run_name:
+            self.log(f"Custom run name: {os.path.join(exec_dir, run_name)}")
+
         captured_dir = None
+        launched_at = datetime.now().timestamp()
 
         try:
             self.log(f"--- Launching bash {os.path.basename(script)} ---")
@@ -1350,6 +1400,14 @@ class MitoPipelineDashboard:
             if self.stop_requested:
                 self.log("--- PIPELINE ABORTED BY USER ---")
                 return False, None
+
+            # The pipeline announces its folder on stdout. If that line never
+            # arrived (an early failure, for instance), fall back to the newest
+            # output folder this run created so the user is still told where to look.
+            if not captured_dir:
+                captured_dir = self._find_run_output(exec_dir, launched_at, run_name)
+                if captured_dir:
+                    self.log(f"Output folder located by scan: {captured_dir}")
 
             self.update_progress_ui(total_files, total_files, "Finished")
             return (self.current_process.returncode == 0), captured_dir

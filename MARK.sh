@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-VERSION="1.1.8"
+VERSION="1.1.9"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"
@@ -28,6 +28,7 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  EXTRA_TRIM=\"0\"           Extra bases to trim from both ends"
   echo -e "  ref=\"linearized_mtdna.fasta\"     Reference FASTA file"
   echo -e "  regions_bed=\"linearized_regions.bed\" Amplicon BED file"
+  echo -e "  RUN_NAME=\"\"             Name for the output folder (default: auto-generated)"
   echo -e "\nEXAMPLE EXECUTIONS:"
   echo -e "  # Run with defaults:"
   echo -e "  MARK.sh /path/to/fastqs"
@@ -94,7 +95,26 @@ command -v fastplong >/dev/null 2>&1 || { echo "Error: fastplong not found."; ex
 # --- Output Folder Setup ---
 run_ts="$(date +%Y%m%d_%H%M%S)"
 input_name="$(basename "$input_path")"
-run_out="${pipeline_name}_${input_name}_${run_ts}_output"
+default_run_out="${pipeline_name}_${input_name}_${run_ts}_output"
+
+# RUN_NAME lets the launcher (or the user) name the output folder explicitly.
+# It is reduced to a single, safe path component; anything unusable falls back
+# to the default naming convention.
+if [[ -n "${RUN_NAME:-}" ]]; then
+  run_out="$(basename "$RUN_NAME")"
+  run_out="${run_out//[^A-Za-z0-9._-]/_}"
+  run_out="${run_out#.}"
+  [[ -n "$run_out" ]] || run_out="$default_run_out"
+else
+  run_out="$default_run_out"
+fi
+
+# Never write a new run into a folder that already holds results.
+if [[ -d "$run_out" && -n "$(ls -A "$run_out" 2>/dev/null)" ]]; then
+  echo "Error: output folder '$run_out' already exists and is not empty."
+  echo "       Pick a different run name, or move the existing folder aside."
+  exit 1
+fi
 mkdir -p "$run_out"
 
 ref_chrom_name=$(head -n1 "$ref" | cut -d ' ' -f1 | tr -d '>')
