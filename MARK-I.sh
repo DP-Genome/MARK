@@ -275,13 +275,18 @@ for r1 in "${files[@]}"; do
 
   # --- STEP 1: Merge & Filter ---
   merged_fq="$sample_out/${base}_merged.fastq"
+  # Pairs fastp cannot merge are kept as a real pair rather than folded in as two
+  # independent single-end reads, so the pileup can count each fragment once.
+  unmerged_r1="$sample_out/${base}_unmerged_R1.fastq"
+  unmerged_r2="$sample_out/${base}_unmerged_R2.fastq"
   fp_html="$sample_out/${base}_fastp_merge.html"
   fp_json="$sample_out/${base}_fastp_merge.json"
 
   run_log fastp \
     -i "$lensafe_r1" -I "$lensafe_r2" \
-    --merge --include_unmerged --trim_poly_g \
+    --merge --trim_poly_g \
     --merged_out "$merged_fq" \
+    --out1 "$unmerged_r1" --out2 "$unmerged_r2" \
     --qualified_quality_phred "$READQ" \
     --unqualified_percent_limit "$UNQUAL_PCT" \
     --length_required "$MIN_LEN" \
@@ -290,7 +295,9 @@ for r1 in "${files[@]}"; do
     --html "$fp_html" \
     --json "$fp_json" 2> /dev/null
 
-  merged_reads=$(count_fastq_reads "$merged_fq")
+  merged_se=$(count_fastq_reads "$merged_fq")
+  unmerged_pairs=$(count_fastq_reads "$unmerged_r1")
+  merged_reads=$((merged_se + unmerged_pairs * 2))
   merged_drop=$((len_reads * 2 - merged_reads))
   merged_pct=$(awk -v d="$merged_drop" -v i="$((len_reads * 2))" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')
   printf "%s\t1_MergeFilter(Reads)\t%s\t%s\t%s\t%s%%\n" "$base" "$((len_reads * 2))" "$merged_reads" "$merged_drop" "$merged_pct" >> "$run_summary_file"
@@ -301,9 +308,9 @@ for r1 in "${files[@]}"; do
   t3="$sample_out/${base}_trim3.fastq"
   run_log cutadapt -a "file:$ADAPTER_FILE" --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" --cores "$threads" -o "$t3" "$merged_fq" >/dev/null
   t3_reads=$(count_fastq_reads "$t3")
-  t3_drop=$((merged_reads - t3_reads))
-  t3_pct=$(awk -v d="$t3_drop" -v i="$merged_reads" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')
-  printf "%s\t2_Trim3\t%s\t%s\t%s\t%s%%\n" "$base" "$merged_reads" "$t3_reads" "$t3_drop" "$t3_pct" >> "$run_summary_file"
+  t3_drop=$((merged_se - t3_reads))
+  t3_pct=$(awk -v d="$t3_drop" -v i="$merged_se" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')
+  printf "%s\t2_Trim3(merged)\t%s\t%s\t%s\t%s%%\n" "$base" "$merged_se" "$t3_reads" "$t3_drop" "$t3_pct" >> "$run_summary_file"
 
   t5="$sample_out/${base}_trim5.fastq"
   run_log cutadapt -g "file:$ADAPTER_FILE" --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" --cores "$threads" -o "$t5" "$t3" >/dev/null
@@ -322,6 +329,27 @@ for r1 in "${files[@]}"; do
   final_drop=$((t5_reads - final_reads))
   final_pct=$(awk -v d="$final_drop" -v i="$t5_reads" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')
   printf "%s\t4_ExtraTrim\t%s\t%s\t%s\t%s%%\n" "$base" "$t5_reads" "$final_reads" "$final_drop" "$final_pct" >> "$run_summary_file"
+
+  # --- STEP 2.4: The unmerged pairs, trimmed in paired mode ---
+  pe_r1="$sample_out/${base}_pe_trimmed_R1.fastq"
+  pe_r2="$sample_out/${base}_pe_trimmed_R2.fastq"
+  if [[ -s "$unmerged_r1" ]]; then
+    run_log cutadapt -a "file:$ADAPTER_FILE" -A "file:$ADAPTER_FILE" \
+      --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" \
+      --cores "$threads" -o "$sample_out/${base}_pe3_R1.fastq" -p "$sample_out/${base}_pe3_R2.fastq" \
+      "$unmerged_r1" "$unmerged_r2" >/dev/null
+    run_log cutadapt -g "file:$ADAPTER_FILE" -G "file:$ADAPTER_FILE" \
+      --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" \
+      --cores "$threads" -o "$pe_r1" -p "$pe_r2" \
+      "$sample_out/${base}_pe3_R1.fastq" "$sample_out/${base}_pe3_R2.fastq" >/dev/null
+    pe_pairs=$(count_fastq_reads "$pe_r1")
+  else
+    : > "$pe_r1"; : > "$pe_r2"; pe_pairs=0
+  fi
+  printf "%s\t2b_TrimPairs\t%s\t%s\t%s\t%s%%\n" "$base" "$unmerged_pairs" "$pe_pairs" \
+    "$((unmerged_pairs - pe_pairs))" \
+    "$(awk -v d=$((unmerged_pairs - pe_pairs)) -v i="$unmerged_pairs" 'BEGIN{ if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')" \
+    >> "$run_summary_file"
 
   # --- STEP 2.5: Post-Trim Length Filtering ---
   final_len_fq="$sample_out/${base}_trim5_u${EXTRA_TRIM}x2_lenFiltered.fastq"
@@ -344,7 +372,15 @@ for r1 in "${files[@]}"; do
 
   # --- STEP 3: Initial Alignment ---
   bam_initial="$sample_out/${base}_initial_sorted.bam"
-  run_log bash -lc "{ bwa-mem2 mem -t $threads '$ref' '$final_fq' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_initial'; }"
+  bam_se="$sample_out/${base}_se_sorted.bam"
+  bam_pe="$sample_out/${base}_pe_sorted.bam"
+  run_log bash -lc "{ bwa-mem2 mem -t $threads '$ref' '$final_fq' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_se'; }"
+  if [[ -s "$pe_r1" ]]; then
+    run_log bash -lc "{ bwa-mem2 mem -t $threads '$ref' '$pe_r1' '$pe_r2' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_pe'; }"
+    run_log bash -lc "samtools merge -f -@ $threads '$bam_initial' '$bam_se' '$bam_pe'"
+  else
+    cp "$bam_se" "$bam_initial"
+  fi
   run_log samtools index "$bam_initial"
 
   # =========================================================================
@@ -539,7 +575,7 @@ for line in sys.stdin:
         sys.stdout.write("\t".join(parts) + "\n")
     except BrokenPipeError:
         sys.exit(0)
-' | samtools view -Sb - | samtools sort -@ "$threads" -o "$bam_trimmed"
+' | samtools view -Sb - | samtools sort -n -@ "$threads" - | samtools fixmate -@ "$threads" - - | samtools sort -@ "$threads" -o "$bam_trimmed"
 
   run_log samtools index "$bam_trimmed"
 
