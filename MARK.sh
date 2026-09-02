@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-VERSION="1.1.9"
+VERSION="1.1.10"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"
@@ -79,10 +79,10 @@ fi
 ADAPTER_FILE="${ADAPTER_FILE:-}"
 if [[ -z "$ADAPTER_FILE" ]]; then
   main_dir="$(dirname "$input_path")"
-  if [[ -f "$main_dir/Updated_Adapter_Primer_List_Cutadapt_cleaned.txt" ]]; then
-    ADAPTER_FILE="$main_dir/Updated_Adapter_Primer_List_Cutadapt_cleaned.txt"
-  elif [[ -f "Updated_Adapter_Primer_List_Cutadapt_cleaned.txt" ]]; then
-    ADAPTER_FILE="$(pwd)/Updated_Adapter_Primer_List_Cutadapt_cleaned.txt"
+  if [[ -f "$main_dir/MARK_Adapter_List_v2.txt" ]]; then
+    ADAPTER_FILE="$main_dir/MARK_Adapter_List_v2.txt"
+  elif [[ -f "MARK_Adapter_List_v2.txt" ]]; then
+    ADAPTER_FILE="$(pwd)/MARK_Adapter_List_v2.txt"
   fi
 fi
 if [[ -z "$ADAPTER_FILE" || ! -f "$ADAPTER_FILE" ]]; then

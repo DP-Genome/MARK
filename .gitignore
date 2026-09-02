@@ -3,3 +3,10 @@ __pycache__/
 
 # Pipeline run outputs (per-sample, timestamped) — not part of the release
 *_output/
+
+# bwa-mem2 index files (generated on first run)
+*.fasta.0123
+*.fasta.amb
+*.fasta.ann
+*.fasta.bwt.2bit.64
+*.fasta.pac

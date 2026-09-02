@@ -64,7 +64,7 @@ class Theme:
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.1.9 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.1.10 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -486,7 +486,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.1.9",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.1.10",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
@@ -928,7 +928,7 @@ class MitoPipelineDashboard:
         row_entry(io_frame, 1, "Regions BED:", self.bed_path,
                   lambda: self.browse_file(self.bed_path, [("BED", "*.bed")]))
 
-        self.adapter_path = tk.StringVar(value=self.get_def_path("Updated_Adapter_Primer_List_Cutadapt_cleaned.txt"))
+        self.adapter_path = tk.StringVar(value=self.get_def_path("MARK_Adapter_List_v2.txt"))
         row_entry(io_frame, 2, "Adapter File:", self.adapter_path,
                   lambda: self.browse_file(self.adapter_path, [("Text", "*.txt")]))
 
