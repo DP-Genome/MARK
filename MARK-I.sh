@@ -87,10 +87,10 @@ fi
 ADAPTER_FILE="${ADAPTER_FILE:-}"
 if [[ -z "$ADAPTER_FILE" ]]; then
   main_dir="$(dirname "$input_path")"
-  if [[ -f "$main_dir/MARK_Adapter_List_v2.txt" ]]; then
-    ADAPTER_FILE="$main_dir/MARK_Adapter_List_v2.txt"
-  elif [[ -f "MARK_Adapter_List_v2.txt" ]]; then
-    ADAPTER_FILE="$(pwd)/MARK_Adapter_List_v2.txt"
+  if [[ -f "$main_dir/MARK_Adapter_List_Illumina.txt" ]]; then
+    ADAPTER_FILE="$main_dir/MARK_Adapter_List_Illumina.txt"
+  elif [[ -f "MARK_Adapter_List_Illumina.txt" ]]; then
+    ADAPTER_FILE="$(pwd)/MARK_Adapter_List_Illumina.txt"
   fi
 fi
 if [[ -z "$ADAPTER_FILE" || ! -f "$ADAPTER_FILE" ]]; then

@@ -928,7 +928,7 @@ class MitoPipelineDashboard:
         row_entry(io_frame, 1, "Regions BED:", self.bed_path,
                   lambda: self.browse_file(self.bed_path, [("BED", "*.bed")]))
 
-        self.adapter_path = tk.StringVar(value=self.get_def_path("MARK_Adapter_List_v2.txt"))
+        self.adapter_path = tk.StringVar(value=self.default_adapter_for(self.script_path.get()))
         row_entry(io_frame, 2, "Adapter File:", self.adapter_path,
                   lambda: self.browse_file(self.adapter_path, [("Text", "*.txt")]))
 
@@ -1030,10 +1030,31 @@ class MitoPipelineDashboard:
             self.refresh_config_ui()
             self.log(f"Loaded parameters from: {os.path.basename(path)}")
 
+    def default_adapter_for(self, script_path):
+        """Illumina reads carry only Illumina adapters; ONT libraries carry the
+        Nanopore chemistry as well, so each pipeline gets its own list."""
+        name = os.path.basename(script_path or "")
+        if "MARK-I" in name:
+            return self.get_def_path("MARK_Adapter_List_Illumina.txt")
+        return self.get_def_path("MARK_Adapter_List_ONT.txt")
+
+    def sync_adapter_to_script(self):
+        """Follow the pipeline unless the user has chosen a list of their own."""
+        known = {self.get_def_path("MARK_Adapter_List_Illumina.txt"),
+                 self.get_def_path("MARK_Adapter_List_ONT.txt")}
+        current = self.adapter_path.get().strip()
+        if current and current not in known:
+            return
+        want = self.default_adapter_for(self.script_path.get())
+        if current != want:
+            self.adapter_path.set(want)
+            self.log(f"Adapter list set to {os.path.basename(want)} for {os.path.basename(self.script_path.get())}")
+
     def refresh_config_ui(self):
         for widget in self.grid_frame.winfo_children():
             widget.destroy()
 
+        self.sync_adapter_to_script()
         script_defaults = self.parse_script_defaults(self.script_path.get())
 
         headers = ["Parameter", "Script Default", "Your Manual Value", "Override?", "Final Value to Pass"]
