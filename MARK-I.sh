@@ -29,6 +29,7 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  ref=\"linearized_mtdna.fasta\"     Reference FASTA file"
   echo -e "  regions_bed=\"linearized_regions.bed\" Amplicon BED file"
   echo -e "  RUN_NAME=\"\"             Name for the output folder (default: auto-generated)"
+  echo -e "  OUTPUT_DIR=\"\"           Where to create it (default: beside the input)"
   echo -e "\nEXAMPLE EXECUTIONS:"
   echo -e "  # Run with defaults:"
   echo -e "  MARK-I.sh /path/to/fastqs"
@@ -116,19 +117,37 @@ command -v fastp >/dev/null 2>&1 || { echo "Error: fastp not found."; exit 1; }
 # --- Output Folder Setup ---
 run_ts="$(date +%Y%m%d_%H%M%S)"
 input_name="$(basename "$input_path")"
-default_run_out="${pipeline_name}_${input_name}_${run_ts}_output"
+default_run_name="${pipeline_name}_${input_name}_${run_ts}_output"
+
+# OUTPUT_DIR is the directory the run folder is created in. It defaults to the
+# directory holding the input, so a run sits BESIDE its input rather than inside
+# it, and does so regardless of where the script was invoked from.
+if [[ -n "${OUTPUT_DIR:-}" ]]; then
+  out_base_dir="$OUTPUT_DIR"
+  mkdir -p "$out_base_dir" 2>/dev/null || true
+elif [[ -d "$input_path" ]]; then
+  out_base_dir="$(dirname "$(cd "$input_path" && pwd)")"
+else
+  out_base_dir="$(cd "$(dirname "$input_path")" && pwd)"
+fi
+if [[ ! -d "$out_base_dir" ]]; then
+  echo "Error: output directory '$out_base_dir' does not exist and could not be created."
+  exit 1
+fi
+out_base_dir="$(cd "$out_base_dir" && pwd)"
 
 # RUN_NAME lets the launcher (or the user) name the output folder explicitly.
 # It is reduced to a single, safe path component; anything unusable falls back
 # to the default naming convention.
 if [[ -n "${RUN_NAME:-}" ]]; then
-  run_out="$(basename "$RUN_NAME")"
-  run_out="${run_out//[^A-Za-z0-9._-]/_}"
-  run_out="${run_out#.}"
-  [[ -n "$run_out" ]] || run_out="$default_run_out"
+  run_name="$(basename "$RUN_NAME")"
+  run_name="${run_name//[^A-Za-z0-9._-]/_}"
+  run_name="${run_name#.}"
+  [[ -n "$run_name" ]] || run_name="$default_run_name"
 else
-  run_out="$default_run_out"
+  run_name="$default_run_name"
 fi
+run_out="$out_base_dir/$run_name"
 
 # Never write a new run into a folder that already holds results.
 if [[ -d "$run_out" && -n "$(ls -A "$run_out" 2>/dev/null)" ]]; then
