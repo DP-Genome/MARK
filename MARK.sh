@@ -423,6 +423,12 @@ for line in sys.stdin:
             max_overlap = overlap
             best_amp = name
             
+    # A read can overlap no amplicon at all - off-target, or a mate that landed
+    # outside the panel once paired alignment was introduced. Drop it rather than
+    # indexing tiled_bounds with None.
+    if best_amp is None or max_overlap <= 0:
+        continue
+
     t_start, t_end = tiled_bounds[best_amp]
     # Perfect tiling in 0-based conversion to completely eliminate any gap and overlap
     keep_start = t_start - 1
