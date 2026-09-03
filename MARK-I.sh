@@ -279,6 +279,10 @@ for r1 in "${files[@]}"; do
   # independent single-end reads, so the pileup can count each fragment once.
   unmerged_r1="$sample_out/${base}_unmerged_R1.fastq"
   unmerged_r2="$sample_out/${base}_unmerged_R2.fastq"
+  # When one mate fails filtering fastp discards the pair by default, taking a
+  # usable read with it. These keep the surviving mate, handled as single-end.
+  rescued_r1="$sample_out/${base}_rescued_R1.fastq"
+  rescued_r2="$sample_out/${base}_rescued_R2.fastq"
   fp_html="$sample_out/${base}_fastp_merge.html"
   fp_json="$sample_out/${base}_fastp_merge.json"
 
@@ -287,6 +291,7 @@ for r1 in "${files[@]}"; do
     --merge --trim_poly_g \
     --merged_out "$merged_fq" \
     --out1 "$unmerged_r1" --out2 "$unmerged_r2" \
+    --unpaired1 "$rescued_r1" --unpaired2 "$rescued_r2" \
     --qualified_quality_phred "$READQ" \
     --unqualified_percent_limit "$UNQUAL_PCT" \
     --length_required "$MIN_LEN" \
@@ -295,6 +300,14 @@ for r1 in "${files[@]}"; do
     --html "$fp_html" \
     --json "$fp_json" 2> /dev/null
 
+  rescued_n=0
+  for rf in "$rescued_r1" "$rescued_r2"; do
+    if [[ -s "$rf" ]]; then
+      rescued_n=$((rescued_n + $(count_fastq_reads "$rf")))
+      cat "$rf" >> "$merged_fq"
+    fi
+  done
+  echo "[Rescue] kept $rescued_n reads whose mate failed filtering" | tee -a "$log_file"
   merged_se=$(count_fastq_reads "$merged_fq")
   unmerged_pairs=$(count_fastq_reads "$unmerged_r1")
   merged_reads=$((merged_se + unmerged_pairs * 2))
