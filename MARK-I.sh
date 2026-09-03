@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-VERSION="1.1.10"
+VERSION="1.2.0"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (Illumina) v$VERSION"
