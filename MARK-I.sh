@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="1.2.1"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (Illumina) v$VERSION"
@@ -70,6 +70,15 @@ SAFETY_QUAL="${SAFETY_QUAL:-20}"
 STRICT_QUAL="${STRICT_QUAL:-60}"
 MIN_DEPTH="${MIN_DEPTH:-10}"       
 PILEUP_MAX_DEPTH="${PILEUP_MAX_DEPTH:-100000}"
+# bcftools keeps a SEPARATE depth cap for indel candidates (--max-idepth,
+# default 250). Raising -d alone leaves it at 250, which silently stops indel
+# candidate generation above 250x - i.e. everywhere in this panel. Tie it to
+# PILEUP_MAX_DEPTH so one setting governs both and nothing is capped below it.
+# The snps/clean outputs stay SNP-only (they filter on TYPE="snp"); this only
+# restores indels to the annotated_all / qual_filtered review VCFs, which is
+# where they are meant to appear. Verified on 8_NIST_C_S7: annotated_all gains
+# rCRS 513 CA-deletion (q=228) and 16181 (q=75); clean is byte-identical.
+PILEUP_MAX_IDEPTH="${PILEUP_MAX_IDEPTH:-$PILEUP_MAX_DEPTH}"
 BASEQ_MIN="${BASEQ_MIN:-20}"       
 MAPQ_MIN="${MAPQ_MIN:-20}"
 EDGE_PROTECT="${EDGE_PROTECT:-1}"
@@ -206,6 +215,7 @@ run_summary_file="$run_out/run_summary.txt"
   echo "## MAPQ_MIN       : $MAPQ_MIN"
   echo "## BASEQ_MIN      : $BASEQ_MIN"
   echo "## PILEUP_DEPTH   : $PILEUP_MAX_DEPTH"
+  echo "## PILEUP_IDEPTH  : $PILEUP_MAX_IDEPTH"
   echo "##"
   echo "## --- VARIANT FILTERING ---"
   echo "## MIN_DEPTH      : $MIN_DEPTH"
@@ -407,7 +417,7 @@ for r1 in "${files[@]}"; do
   # Baseline Variant Calling
   vcf_raw_base="$sample_out/${base}_baseline_raw.vcf"
   vcf_qual_base="$sample_out/${base}_baseline_qual_filtered.vcf"
-  run_log bash -lc "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $PILEUP_MAX_DEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_baseline' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_base'; }"
+  run_log bash -lc "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $PILEUP_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_baseline' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_base'; }"
   run_log bcftools filter -i "QUAL>$SAFETY_QUAL && INFO/DP>=$MIN_DEPTH" -Ov -o "$vcf_qual_base" "$vcf_raw_base"
 
   # Baseline Annotation
@@ -434,32 +444,59 @@ for r1 in "${files[@]}"; do
   samtools view -h "$bam_initial" | python3 -c '
 import os, sys, re
 
-# Perfectly tiled boundary protection
+# Primer-aware insert trimming (see CRM_Nested_primers_empirical.bed)
+# Assignment stays on the insert spans. Assigning on the full product span
+# instead lets a neighbour with a long primer arm (Amp7 reaches 8578, past
+# Amp8 insert start 8531) capture reads it then clips away - measured as a
+# real coverage loss in 9_NIST_B_S4 at rCRS 286 and 4_DNA007_S6 at rCRS 442-460.
 amplicons = [
-    ("Amp1", 7729, 7842),
-    ("Amp2", 7832, 7941),
-    ("Amp3", 7939, 8124),
-    ("Amp4", 8103, 8202),
-    ("Amp5", 8190, 8315),
-    ("Amp6", 8271, 8437),
-    ("Amp7", 8421, 8542),
-    ("Amp8", 8531, 8649),
-    ("Amp9", 8627, 8721),
+    ("Amp1",  7729, 7842),
+    ("Amp2",  7832, 7941),
+    ("Amp3",  7939, 8124),
+    ("Amp4",  8103, 8202),
+    ("Amp5",  8190, 8315),
+    ("Amp6",  8271, 8437),
+    ("Amp7",  8421, 8542),
+    ("Amp8",  8531, 8649),
+    ("Amp9",  8627, 8721),
     ("Amp10", 8714, 8877)
 ]
 
+# Callable insert per amplicon: the product minus its own primer footprints.
+# These are the FBI validation amplicon coordinates. Unlike the midpoint tiles
+# they replace, adjacent inserts overlap - a base covered by two amplicons is
+# sequenced by two independent molecules, so both are counted. Each fragment is
+# still counted once; samtools fixmate collapses R1/R2 overlap.
 tiled_bounds = {
-    "Amp1":  (7729, 7837),
-    "Amp2":  (7838, 7940),
-    "Amp3":  (7941, 8113),
-    "Amp4":  (8114, 8196),
-    "Amp5":  (8197, 8293),
-    "Amp6":  (8294, 8429),
-    "Amp7":  (8430, 8536),
-    "Amp8":  (8537, 8638),
-    "Amp9":  (8639, 8717),
-    "Amp10": (8718, 8877)
+    "Amp1":  (7729, 7842),
+    "Amp2":  (7832, 7941),
+    "Amp3":  (7939, 8124),
+    "Amp4":  (8103, 8202),
+    "Amp5":  (8190, 8315),
+    "Amp6":  (8271, 8437),
+    "Amp7":  (8421, 8542),
+    "Amp8":  (8531, 8649),
+    "Amp9":  (8627, 8721),
+    "Amp10": (8714, 8877)
 }
+
+# Measured product spans and their primer footprints, from the fixed fragment termini
+# observed in the data (see CRM_Nested_primers_empirical.bed).
+#   name, product_start, product_end, forward_primer_end, reverse_primer_start  (1-based)
+products = [
+    ("Amp1",  7702, 7868, 7728, 7843),
+    ("Amp2",  7810, 7964, 7831, 7942),
+    ("Amp3",  7913, 8149, 7938, 8125),
+    ("Amp4",  8079, 8225, 8102, 8203),
+    ("Amp5",  8166, 8337, 8189, 8316),
+    ("Amp6",  8258, 8465, 8270, 8438),
+    ("Amp7",  8394, 8578, 8420, 8543),
+    ("Amp8",  8503, 8674, 8530, 8650),
+    ("Amp9",  8608, 8745, 8626, 8722),
+    ("Amp10", 8687, 8904, 8713, 8878),
+]
+PRIMER_TOL = 10
+
 
 cigar_re = re.compile(r"(\d+)([MIDNSHPX=])")
 # Edge protect is forced to 0 at junctions by using tiled_bounds directly
@@ -493,30 +530,62 @@ for line in sys.stdin:
     ref_span = sum(int(n) for n, op in cigar_re.findall(cigar) if op in "MDN=X")
     ref_end = pos + ref_span
     
-    # --- MAXIMUM OVERLAP AMPLICON ASSIGNMENT ---
-    best_amp = None
-    max_overlap = -1
-    
-    for name, a_start, a_end in amplicons:
-        # Calculate how many bases overlap between the read and this original amplicon
-        ovl_start = max(pos, a_start)
-        ovl_end = min(ref_end, a_end)
-        overlap = ovl_end - ovl_start
-        
-        if overlap > max_overlap:
-            max_overlap = overlap
-            best_amp = name
-            
-    # A read can overlap no amplicon at all - off-target, or a mate that landed
-    # outside the panel once paired alignment was introduced. Drop it rather than
-    # indexing tiled_bounds with None.
-    if best_amp is None or max_overlap <= 0:
-        continue
+    # --- PRIMER-FOOTPRINT TRIMMING ---
+    # A read is no longer assigned to one amplicon and cut to that amplicon bounds.
+    # Instead each end of the read is checked against the measured product termini:
+    # if this read starts where a product starts, its own forward primer is removed;
+    # if it ends where a product ends, its own reverse primer is removed. Everything
+    # between is template and is kept, whichever amplicons it spans.
+    #
+    # This matters for shared and hybrid fragments. A fragment running from the Amp4
+    # forward primer to the Amp5 reverse primer physically covers both inserts; the
+    # max-overlap rule gave it entirely to Amp5 and clipped away its Amp4 half.
+    # Measured cost of that rule: Amp4 retained 51-53% of its depth, Amp9 60-73%.
+    #
+    # An end that matches no product terminus is left alone - that is a read whose
+    # end is genuine template (an unmerged mate, or a partial read), not primer.
+    start1 = pos + 1
+    end1 = ref_end
+    keep_start = pos
+    keep_end = ref_end
+    matched = False
+    for name, p_start, p_end, f_end, r_start in products:
+        if abs(start1 - p_start) <= PRIMER_TOL:
+            matched = True
+            keep_start = max(keep_start, f_end)
+            # a read of this product whose far end stops inside the products own
+            # reverse primer is showing primer sequence there, not template
+            if r_start <= end1 <= p_end + PRIMER_TOL:
+                keep_end = min(keep_end, r_start - 1)
+        if abs(end1 - p_end) <= PRIMER_TOL:
+            matched = True
+            keep_end = min(keep_end, r_start - 1)
+            if p_start - PRIMER_TOL <= start1 <= f_end:
+                keep_start = max(keep_start, f_end)
 
-    t_start, t_end = tiled_bounds[best_amp]
-    # Perfect tiling in 0-based conversion to completely eliminate any gap and overlap
-    keep_start = t_start - 1
-    keep_end = t_end
+    if not matched:
+        # Neither end lines up with a known product, so we cannot tell which primers
+        # this fragment carries. Fall back to the conservative primer-aware rule:
+        # assign to the amplicon it overlaps most and clip to that insert. About 0.2%
+        # of reads, but they cluster where genuine coverage is thin, so leaving them
+        # untrimmed would let primer sequence stand in for missing template.
+        best_amp = None
+        max_overlap = -1
+        for name, a_start, a_end in amplicons:
+            overlap = min(ref_end, a_end) - max(pos, a_start)
+            if overlap > max_overlap:
+                max_overlap = overlap
+                best_amp = name
+        if best_amp is None or max_overlap <= 0:
+            continue
+        t_start, t_end = tiled_bounds[best_amp]
+        keep_start = t_start - 1
+        keep_end = t_end
+
+    # off-target guard: the read must still touch at least one amplicon insert
+    if not any(min(keep_end, a_end) - max(keep_start, a_start) > 0
+               for _, a_start, a_end in amplicons):
+        continue
 
     if ref_end <= keep_start or pos >= keep_end:
         continue # Entire read is outside the target amplicon
@@ -601,7 +670,7 @@ for line in sys.stdin:
   # Trimmed Variant Calling
   vcf_raw_trimmed="$sample_out/${base}_trimmed_raw.vcf"
   vcf_qual_trimmed="$sample_out/${base}_trimmed_qual_filtered.vcf"
-  run_log bash -lc "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $PILEUP_MAX_DEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_trimmed' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_trimmed'; }"
+  run_log bash -lc "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $PILEUP_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_trimmed' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_trimmed'; }"
   run_log bcftools filter -i "QUAL>$SAFETY_QUAL && INFO/DP>=$MIN_DEPTH" -Ov -o "$vcf_qual_trimmed" "$vcf_raw_trimmed"
 
   # Trimmed Annotation

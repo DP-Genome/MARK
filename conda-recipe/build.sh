@@ -20,6 +20,13 @@ cp MARK_Adapter_List_Illumina.txt $PREFIX/bin/ || echo "Warning: Illumina adapte
 cp MARK_Adapter_List_ONT.txt $PREFIX/bin/ || echo "Warning: ONT adapter list missing"
 cp rCRS.fasta $PREFIX/bin/ || echo "Warning: rCRS missing"
 
+# Measured CRM Nested coordinates: amplicon inserts, full PCR products, and the
+# primer footprints between them. Reference/annotation data - the pipelines carry
+# their own copy of the product coordinates internally.
+cp CRM_Nested_inserts.bed $PREFIX/bin/ || echo "Warning: inserts BED missing"
+cp CRM_Nested_products.bed $PREFIX/bin/ || echo "Warning: products BED missing"
+cp CRM_Nested_primers_empirical.bed $PREFIX/bin/ || echo "Warning: primers BED missing"
+
 # Copy the demo test file
 cp Test_M.fastq $PREFIX/bin/ || echo "Warning: Test file missing"
 
