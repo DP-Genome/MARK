@@ -100,3 +100,21 @@ On amplicon performance the paper reports amplicons **2, 3 and 8** as weakest �
 the largest and worst affected by fragmentation, 2 and 8 because they sit on the damage and
 heteroplasmy hotspots at 16189 and 303-315. **Amplicon 10 is not flagged**, supporting our own
 finding that DNA007's amplicon 10 failure is specific to that sample rather than a kit weakness.
+
+## Also in v1.2.1 — cutadapt can no longer hang a run
+
+cutadapt's multi-core mode can deadlock on macOS: its parent process waits forever on worker
+processes that have already died. It happened once during v1.2 testing — one library sat for
+four days having used four seconds of CPU — and because the pipeline had no timeout, the run
+simply stopped, with no error.
+
+Every cutadapt call now goes through `run_cutadapt`, which watches the output file. If the
+output stops growing for `CUTADAPT_STALL_SECS` (default 600 s), the run is killed and repeated
+with `--cores 1`, which has no worker processes and cannot deadlock. If it stalls again, the
+pipeline stops with an error rather than skipping the sample.
+
+The retry cannot change results, because cutadapt keeps reads in input order in multi-core
+mode. On `Test_M.fastq`, output through the wrapper, direct at 8 cores and direct at 1 core
+are byte-identical (4,846 reads, same MD5). Also tested: a simulated deadlock (killed, rerun
+single-core, run completes), a deadlock that persists single-core (pipeline stops with an
+error), and a cutadapt failure (exit code passed through, pipeline stops).

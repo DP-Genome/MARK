@@ -21,6 +21,7 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  threads=\"8\"              Number of CPU threads to use"
   echo -e "  MIN_DEPTH=\"10\"           Minimum depth for variant calling"
   echo -e "  READQ=\"20\"               Quality score requirement (fastp)"
+  echo -e "  CUTADAPT_STALL_SECS=\"600\" Seconds without cutadapt output before it is killed and rerun single-core"
   echo -e "  MIN_LEN=\"90\"             Min RAW fragment length (validated floor; dropped)"
   echo -e "  MAX_LEN=\"1500\"           Maximum read length (LENSAFE filter)"
   echo -e "  MIN_LEN_POST=\"30\"        Mappability floor AFTER trimming (not the 90 bp filter)"
@@ -61,6 +62,7 @@ N_BASE_LIMIT="${N_BASE_LIMIT:-5}"
 CUTADAPT_ERR="${CUTADAPT_ERR:-0.10}"
 CUTADAPT_OVL="${CUTADAPT_OVL:-5}"
 EXTRA_TRIM="${EXTRA_TRIM:-0}"
+CUTADAPT_STALL_SECS="${CUTADAPT_STALL_SECS:-600}"
 
 ref="${ref:-linearized_mtdna.fasta}"
 regions_bed="${regions_bed:-linearized_regions.bed}"
@@ -174,6 +176,49 @@ run_log() {
     "$@"
     printf '\n'
   } 2>&1 | tee -a "$log_file"
+}
+
+# cutadapt's multi-core mode can deadlock on macOS: the parent process waits forever
+# on worker processes that have already died, nothing times out, and the run hangs
+# with no error. So watch the output file instead: if it stops growing for
+# CUTADAPT_STALL_SECS, kill the run and repeat it single-core, which has no worker
+# processes to lose. The output is identical either way, because cutadapt keeps reads
+# in input order in multi-core mode. A second stall is a hard error, never a skip.
+_cutadapt_out_size() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null || echo 0; }
+run_cutadapt() {
+  local args=("$@") out="" i attempt pid rc size last idle stalled
+  for ((i = 0; i < ${#args[@]}; i++)); do
+    if [[ "${args[$i]}" == "-o" ]]; then out="${args[$((i + 1))]}"; fi
+  done
+  for attempt in 1 2; do
+    if [[ -n "$out" ]]; then rm -f "$out"; fi
+    printf 'Running: cutadapt %s\n' "${args[*]}" >> "$log_file"
+    cutadapt "${args[@]}" >> "$log_file" 2>&1 &
+    pid=$!
+    last=-1; idle=0; stalled=0
+    while kill -0 "$pid" 2>/dev/null; do
+      sleep 1
+      size=$(_cutadapt_out_size "$out")
+      if [[ "$size" != "$last" ]]; then last=$size; idle=0; else idle=$((idle + 1)); fi
+      if (( idle >= CUTADAPT_STALL_SECS )) && kill -0 "$pid" 2>/dev/null; then
+        stalled=1
+        pkill -9 -P "$pid" 2>/dev/null || true
+        kill -9 "$pid" 2>/dev/null || true
+        break
+      fi
+    done
+    if wait "$pid" 2>/dev/null; then rc=0; else rc=$?; fi
+    if (( stalled == 0 )); then
+      printf '\n' >> "$log_file"
+      return "$rc"
+    fi
+    echo "[cutadapt] output stopped growing for ${CUTADAPT_STALL_SECS}s; killed and rerunning single-core" | tee -a "$log_file" >&2
+    for ((i = 0; i < ${#args[@]}; i++)); do
+      if [[ "${args[$i]}" == "--cores" ]]; then args[$((i + 1))]=1; fi
+    done
+  done
+  echo "Error: cutadapt stalled again, single-core, writing $out" | tee -a "$log_file" >&2
+  return 1
 }
 
 count_fastq_reads() {
@@ -329,14 +374,14 @@ for r1 in "${files[@]}"; do
   run_log fastqc "$merged_fq" -o "$sample_out" > /dev/null 2>&1
   
   t3="$sample_out/${base}_trim3.fastq"
-  run_log cutadapt -a "file:$ADAPTER_FILE" --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" --cores "$threads" -o "$t3" "$merged_fq" >/dev/null
+  run_cutadapt -a "file:$ADAPTER_FILE" --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" --cores "$threads" -o "$t3" "$merged_fq" >/dev/null
   t3_reads=$(count_fastq_reads "$t3")
   t3_drop=$((merged_se - t3_reads))
   t3_pct=$(awk -v d="$t3_drop" -v i="$merged_se" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')
   printf "%s\t2_Trim3(merged)\t%s\t%s\t%s\t%s%%\n" "$base" "$merged_se" "$t3_reads" "$t3_drop" "$t3_pct" >> "$run_summary_file"
 
   t5="$sample_out/${base}_trim5.fastq"
-  run_log cutadapt -g "file:$ADAPTER_FILE" --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" --cores "$threads" -o "$t5" "$t3" >/dev/null
+  run_cutadapt -g "file:$ADAPTER_FILE" --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" --cores "$threads" -o "$t5" "$t3" >/dev/null
   t5_reads=$(count_fastq_reads "$t5")
   t5_drop=$((t3_reads - t5_reads))
   t5_pct=$(awk -v d="$t5_drop" -v i="$t3_reads" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')
@@ -344,7 +389,7 @@ for r1 in "${files[@]}"; do
   
   final_fq="$sample_out/${base}_trim5_u${EXTRA_TRIM}x2.fastq"
   if [[ "$EXTRA_TRIM" -gt 0 ]]; then
-    run_log cutadapt -u "$EXTRA_TRIM" -u "-$EXTRA_TRIM" --minimum-length "$MIN_LEN_POST" --cores "$threads" -o "$final_fq" "$t5" >/dev/null
+    run_cutadapt -u "$EXTRA_TRIM" -u "-$EXTRA_TRIM" --minimum-length "$MIN_LEN_POST" --cores "$threads" -o "$final_fq" "$t5" >/dev/null
   else
     ln -sf "$(basename "$t5")" "$final_fq"
   fi
@@ -357,11 +402,11 @@ for r1 in "${files[@]}"; do
   pe_r1="$sample_out/${base}_pe_trimmed_R1.fastq"
   pe_r2="$sample_out/${base}_pe_trimmed_R2.fastq"
   if [[ -s "$unmerged_r1" ]]; then
-    run_log cutadapt -a "file:$ADAPTER_FILE" -A "file:$ADAPTER_FILE" \
+    run_cutadapt -a "file:$ADAPTER_FILE" -A "file:$ADAPTER_FILE" \
       --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" \
       --cores "$threads" -o "$sample_out/${base}_pe3_R1.fastq" -p "$sample_out/${base}_pe3_R2.fastq" \
       "$unmerged_r1" "$unmerged_r2" >/dev/null
-    run_log cutadapt -g "file:$ADAPTER_FILE" -G "file:$ADAPTER_FILE" \
+    run_cutadapt -g "file:$ADAPTER_FILE" -G "file:$ADAPTER_FILE" \
       --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" \
       --cores "$threads" -o "$pe_r1" -p "$pe_r2" \
       "$sample_out/${base}_pe3_R1.fastq" "$sample_out/${base}_pe3_R2.fastq" >/dev/null
