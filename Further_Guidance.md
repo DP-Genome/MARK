@@ -159,8 +159,8 @@ Expected mapping structure example:
 
 ```json
 {
-  "2800M": ["barcode01", "barcode02", "barcode03"],
-  "007": ["barcode04", "barcode05", "barcode06"]
+  "SampleA": ["barcode01", "barcode02", "barcode03"],
+  "SampleB": ["barcode04", "barcode05", "barcode06"]
 }
 ```
 
@@ -350,7 +350,7 @@ A practical use case for the full set of tools would look like this:
 
 1. Run `MARK.sh` or `MARK-I.sh` through `MARKLaunch.py`.
 2. Let the dashboard auto-run post-processing so you end up with corrected VCFs and cleaned BAMs in `Final_Pipeline_Results/`.
-3. Use `VCF_OrganizerApp.py` to group corrected trimmed-track VCFs by biological sample such as `2800M`, `007`, or other sample identities.
+3. Use `VCF_OrganizerApp.py` to group corrected trimmed-track VCFs by biological sample such as `SampleA`, `SampleB`, or other sample identities.
 4. Use `vcf_compare_guiv3.py` to compare triplicates or cross-platform callsets and identify consensus, discordant, and singleton variants.
 5. If a sample behaves abnormally, run `SequenceAnalyzerApp_v3.py` on the pipeline output folder to see whether the issue already appears in the read-length, quality, or mapping progression.
 

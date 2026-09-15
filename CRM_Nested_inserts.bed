@@ -1,12 +1,12 @@
 # Callable insert per amplicon (template-derived bases only).
 # chrom start end name score strand  |  BED 0-based half-open
-NC_012920.1_linearized	7728	7842	Amp1_insert	45860	+
-NC_012920.1_linearized	7831	7941	Amp2_insert	31036	+
-NC_012920.1_linearized	7938	8124	Amp3_insert	33675	+
-NC_012920.1_linearized	8102	8202	Amp4_insert	17455	+
-NC_012920.1_linearized	8189	8315	Amp5_insert	51286	+
-NC_012920.1_linearized	8270	8437	Amp6_insert	53918	+
-NC_012920.1_linearized	8420	8542	Amp7_insert	53101	+
-NC_012920.1_linearized	8530	8649	Amp8_insert	51558	+
-NC_012920.1_linearized	8626	8721	Amp9_insert	47116	+
-NC_012920.1_linearized	8713	8877	Amp10_insert	37873	+
+NC_012920.1_linearized	7728	7842	Amp1_insert	0	+
+NC_012920.1_linearized	7831	7941	Amp2_insert	0	+
+NC_012920.1_linearized	7938	8124	Amp3_insert	0	+
+NC_012920.1_linearized	8102	8202	Amp4_insert	0	+
+NC_012920.1_linearized	8189	8315	Amp5_insert	0	+
+NC_012920.1_linearized	8270	8437	Amp6_insert	0	+
+NC_012920.1_linearized	8420	8542	Amp7_insert	0	+
+NC_012920.1_linearized	8530	8649	Amp8_insert	0	+
+NC_012920.1_linearized	8626	8721	Amp9_insert	0	+
+NC_012920.1_linearized	8713	8877	Amp10_insert	0	+

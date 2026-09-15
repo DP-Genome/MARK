@@ -1,11 +1,11 @@
 # Full PCR product span (primer to primer), observed.
-NC_012920.1_linearized	7701	7868	Amp1_product	45860	+
-NC_012920.1_linearized	7809	7964	Amp2_product	31036	+
-NC_012920.1_linearized	7912	8149	Amp3_product	33675	+
-NC_012920.1_linearized	8078	8225	Amp4_product	17455	+
-NC_012920.1_linearized	8165	8337	Amp5_product	51286	+
-NC_012920.1_linearized	8248	8465	Amp6_product	53918	+
-NC_012920.1_linearized	8393	8578	Amp7_product	53101	+
-NC_012920.1_linearized	8502	8674	Amp8_product	51558	+
-NC_012920.1_linearized	8601	8745	Amp9_product	47116	+
-NC_012920.1_linearized	8686	8904	Amp10_product	37873	+
+NC_012920.1_linearized	7701	7868	Amp1_product	0	+
+NC_012920.1_linearized	7809	7964	Amp2_product	0	+
+NC_012920.1_linearized	7912	8149	Amp3_product	0	+
+NC_012920.1_linearized	8078	8225	Amp4_product	0	+
+NC_012920.1_linearized	8165	8337	Amp5_product	0	+
+NC_012920.1_linearized	8248	8465	Amp6_product	0	+
+NC_012920.1_linearized	8393	8578	Amp7_product	0	+
+NC_012920.1_linearized	8502	8674	Amp8_product	0	+
+NC_012920.1_linearized	8601	8745	Amp9_product	0	+
+NC_012920.1_linearized	8686	8904	Amp10_product	0	+

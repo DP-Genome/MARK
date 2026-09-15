@@ -73,7 +73,7 @@ class VCFOrganizerApp(tk.Tk):
         auto_frame = ttk.LabelFrame(self, text="2. Auto Organization", padding=15)
         auto_frame.pack(fill=tk.X, pady=(0, 15))
         
-        ttk.Label(auto_frame, text="Automatically organize files into sample folders (007, 2800M, etc.) using the mapping JSON.").pack(side=tk.LEFT)
+        ttk.Label(auto_frame, text="Automatically organize files into sample folders (SampleA, SampleB, etc.) using the mapping JSON.").pack(side=tk.LEFT)
         ttk.Button(auto_frame, text="Run Auto Organize", command=self.run_auto).pack(side=tk.RIGHT)
 
         # --- Manual Extraction Frame ---
