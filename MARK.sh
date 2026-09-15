@@ -9,6 +9,24 @@
 
 set -euo pipefail
 
+# Data files (reference, regions BED, adapter lists) ship in the same folder as this
+# script. Find that folder, following symlinks, so a run started from any directory
+# uses the pipeline's own files rather than whatever happens to sit in the cwd.
+_self="${BASH_SOURCE[0]}"
+while [[ -L "$_self" ]]; do
+  _dir="$(cd -P "$(dirname "$_self")" && pwd)"
+  _self="$(readlink "$_self")"
+  if [[ "$_self" != /* ]]; then _self="$_dir/$_self"; fi
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_self")" && pwd)"
+unset _self _dir
+# A bare file name that ships beside this script means that copy. Paths, and names the
+# script folder does not have, are used exactly as given.
+mark_resolve() {
+  if [[ -n "$1" && "$1" != */* && -f "$SCRIPT_DIR/$1" ]]; then printf '%s\n' "$SCRIPT_DIR/$1"
+  else printf '%s\n' "$1"; fi
+}
+
 VERSION="1.2.1"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
@@ -27,8 +45,8 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  MIN_LEN_POST=\"90\"        Minimum read length after trimming"
   echo -e "  MAX_LEN_POST=\"300\"       Maximum read length after trimming"
   echo -e "  EXTRA_TRIM=\"0\"           Extra bases to trim from both ends"
-  echo -e "  ref=\"linearized_mtdna.fasta\"     Reference FASTA file"
-  echo -e "  regions_bed=\"linearized_regions.bed\" Amplicon BED file"
+  echo -e "  ref=\"linearized_mtdna.fasta\"     Reference FASTA file (default: the copy beside this script)"
+  echo -e "  regions_bed=\"linearized_regions.bed\" Amplicon BED file (default: the copy beside this script)"
   echo -e "  RUN_NAME=\"\"             Name for the output folder (default: auto-generated)"
   echo -e "  OUTPUT_DIR=\"\"           Where to create it (default: beside the input)"
   echo -e "\nEXAMPLE EXECUTIONS:"
@@ -58,8 +76,10 @@ CUTADAPT_ERR="${CUTADAPT_ERR:-0.10}"
 CUTADAPT_OVL="${CUTADAPT_OVL:-5}"    
 
 ref="${ref:-linearized_mtdna.fasta}"
+ref="$(mark_resolve "$ref")"
 mmi_index="${mmi_index:-${ref}.mmi}"
 regions_bed="${regions_bed:-linearized_regions.bed}"
+regions_bed="$(mark_resolve "$regions_bed")"
 
 SAFETY_QUAL="${SAFETY_QUAL:-20}"
 STRICT_QUAL="${STRICT_QUAL:-60}"
@@ -91,12 +111,15 @@ fi
 ADAPTER_FILE="${ADAPTER_FILE:-}"
 if [[ -z "$ADAPTER_FILE" ]]; then
   main_dir="$(dirname "$input_path")"
-  if [[ -f "$main_dir/MARK_Adapter_List_ONT.txt" ]]; then
+  if [[ -f "$SCRIPT_DIR/MARK_Adapter_List_ONT.txt" ]]; then
+    ADAPTER_FILE="$SCRIPT_DIR/MARK_Adapter_List_ONT.txt"
+  elif [[ -f "$main_dir/MARK_Adapter_List_ONT.txt" ]]; then
     ADAPTER_FILE="$main_dir/MARK_Adapter_List_ONT.txt"
   elif [[ -f "MARK_Adapter_List_ONT.txt" ]]; then
     ADAPTER_FILE="$(pwd)/MARK_Adapter_List_ONT.txt"
   fi
 fi
+ADAPTER_FILE="$(mark_resolve "$ADAPTER_FILE")"
 if [[ -z "$ADAPTER_FILE" || ! -f "$ADAPTER_FILE" ]]; then
   echo "Error: adapter file not found"
   exit 1

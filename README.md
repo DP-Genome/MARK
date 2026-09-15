@@ -97,6 +97,12 @@ The underlying bash pipelines (`MARK.sh` and `MARK-I.sh`) are fully standalone s
 **⚠️ IMPORTANT NOTE ON COMMAND LINE USAGE:**
 Running the pipeline scripts standalone **only produces the raw uncorrected outputs**. It does **not** automatically correct VCF positions to the circular reference, clean BAM headers, or organize the final files. To get the final corrected outputs, you must run the post-processing steps. You can do this by opening the `MARKLaunch.py` dashboard, navigating to the **Step 2: Post-Processing** tab, and running the steps sequentially on your output folder. Alternatively, you can use the **AUTO** feature in the dashboard to run the pipeline and post-processing together in one click.
 
+**Data files.** Each script uses the reference (`linearized_mtdna.fasta`), regions BED and adapter list that ship in its own folder, so it can be started from any directory. To use different files, pass them explicitly, for example:
+
+```bash
+ref=/path/to/reference.fasta regions_bed=/path/to/regions.bed ADAPTER_FILE=/path/to/adapters.txt MARK.sh input_folder/
+```
+
 Run either script with `--help` to see all available override options:
 
 ```bash

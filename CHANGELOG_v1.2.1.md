@@ -118,3 +118,26 @@ mode. On `Test_M.fastq`, output through the wrapper, direct at 8 cores and direc
 are byte-identical (4,846 reads, same MD5). Also tested: a simulated deadlock (killed, rerun
 single-core, run completes), a deadlock that persists single-core (pipeline stops with an
 error), and a cutadapt failure (exit code passed through, pipeline stops).
+
+## Also in v1.2.1 — the scripts use their own data files, from any directory
+
+Up to v1.2 the reference, regions BED and adapter list were looked up in the current working
+directory, or beside the input folder. Started from anywhere else, a command-line run either
+stopped — `Error: 'linearized_regions.bed' not found` — or silently used whatever copy happened
+to be in that folder, which is exactly how a stale adapter list could creep back in.
+
+Bare file names now resolve to the copy shipped beside the script first, following symlinks,
+so a conda install or a repository checkout uses its own files from any directory. Explicit
+settings still win: `ref=`, `regions_bed=` and `ADAPTER_FILE=` given as paths are used exactly
+as given. The dashboard, which already passes all three explicitly, is unaffected, and its
+parser still reads the same defaults from the scripts. A custom adapter list must now be given
+through `ADAPTER_FILE` (or the dashboard's adapter field) rather than by placing a file named
+`MARK_Adapter_List_*.txt` next to the input.
+
+The resolved path of each file is recorded in the run summary under `## Reference`,
+`## Regions BED` and `## Adapter File`.
+
+Tested from an empty folder with no settings: before the fix the installed `MARK.sh` exited with
+the error above; after it, `MARK.sh` and `MARK-I.sh` both complete, resolve all three files beside
+the script, write nothing into the working directory, and still honour an explicit
+`ADAPTER_FILE`.
