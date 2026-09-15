@@ -98,8 +98,7 @@ PILEUP_MAX_DEPTH="${PILEUP_MAX_DEPTH:-100000}"
 # PILEUP_MAX_DEPTH so one setting governs both and nothing is capped below it.
 # The snps/clean outputs stay SNP-only (they filter on TYPE="snp"); this only
 # restores indels to the annotated_all / qual_filtered review VCFs, which is
-# where they are meant to appear. Verified on 8_NIST_C_S7: annotated_all gains
-# rCRS 513 CA-deletion (q=228) and 16181 (q=75); clean is byte-identical.
+# where they are meant to appear.
 PILEUP_MAX_IDEPTH="${PILEUP_MAX_IDEPTH:-$PILEUP_MAX_DEPTH}"
 BASEQ_MIN="${BASEQ_MIN:-20}"       
 MAPQ_MIN="${MAPQ_MIN:-20}"
@@ -515,8 +514,7 @@ import os, sys, re
 # Primer-aware insert trimming (see CRM_Nested_primers_empirical.bed)
 # Assignment stays on the insert spans. Assigning on the full product span
 # instead lets a neighbour with a long primer arm (Amp7 reaches 8578, past
-# Amp8 insert start 8531) capture reads it then clips away - measured as a
-# real coverage loss in 9_NIST_B_S4 at rCRS 286 and 4_DNA007_S6 at rCRS 442-460.
+# Amp8 insert start 8531) capture reads it then clips away, losing real coverage.
 amplicons = [
     ("Amp1",  7729, 7842),
     ("Amp2",  7832, 7941),
@@ -531,8 +529,9 @@ amplicons = [
 ]
 
 # Callable insert per amplicon: the product minus its own primer footprints.
-# These are the FBI validation amplicon coordinates. Unlike the midpoint tiles
-# they replace, adjacent inserts overlap - a base covered by two amplicons is
+# These are the ten inserts published for the PowerSeq CRM Nested System
+# (Vinueza-Espinosa et al. 2023, Electrophoresis 44:1423-1434). Unlike the midpoint
+# tiles they replace, adjacent inserts overlap - a base covered by two amplicons is
 # sequenced by two independent molecules, so both are counted. Each fragment is
 # still counted once; samtools fixmate collapses R1/R2 overlap.
 tiled_bounds = {
@@ -548,8 +547,9 @@ tiled_bounds = {
     "Amp10": (8714, 8877)
 }
 
-# Measured product spans and their primer footprints, from the fixed fragment termini
-# observed in the data (see CRM_Nested_primers_empirical.bed).
+# Product spans and their primer footprints. Promega does not publish the primers,
+# so these come from the fixed read termini seen when sequencing this kit
+# (see CRM_Nested_primers_empirical.bed).
 #   name, product_start, product_end, forward_primer_end, reverse_primer_start  (1-based)
 products = [
     ("Amp1",  7702, 7868, 7728, 7843),
@@ -600,15 +600,15 @@ for line in sys.stdin:
     
     # --- PRIMER-FOOTPRINT TRIMMING ---
     # A read is no longer assigned to one amplicon and cut to that amplicon bounds.
-    # Instead each end of the read is checked against the measured product termini:
+    # Instead each end of the read is checked against the known product termini:
     # if this read starts where a product starts, its own forward primer is removed;
     # if it ends where a product ends, its own reverse primer is removed. Everything
     # between is template and is kept, whichever amplicons it spans.
     #
     # This matters for shared and hybrid fragments. A fragment running from the Amp4
     # forward primer to the Amp5 reverse primer physically covers both inserts; the
-    # max-overlap rule gave it entirely to Amp5 and clipped away its Amp4 half.
-    # Measured cost of that rule: Amp4 retained 51-53% of its depth, Amp9 60-73%.
+    # max-overlap rule gave it entirely to Amp5 and clipped away its Amp4 half,
+    # discarding real template.
     #
     # An end that matches no product terminus is left alone - that is a read whose
     # end is genuine template (an unmerged mate, or a partial read), not primer.
@@ -634,8 +634,8 @@ for line in sys.stdin:
     if not matched:
         # Neither end lines up with a known product, so we cannot tell which primers
         # this fragment carries. Fall back to the conservative primer-aware rule:
-        # assign to the amplicon it overlaps most and clip to that insert. About 0.2%
-        # of reads, but they cluster where genuine coverage is thin, so leaving them
+        # assign to the amplicon it overlaps most and clip to that insert. Such reads
+        # are rare but tend to occur where genuine coverage is thin, so leaving them
         # untrimmed would let primer sequence stand in for missing template.
         best_amp = None
         max_overlap = -1

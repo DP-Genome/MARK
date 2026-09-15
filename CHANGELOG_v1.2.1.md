@@ -1,143 +1,128 @@
-# v1.2.1 — primer-match tolerance raised from 6 to 10
+# MARK v1.2.1 — changes since v1.1.8
 
-## What changed
+This release also includes the changes made in v1.1.9. The variant-calling settings and filters are unchanged. What changed is how reads are filtered, trimmed and aligned before calling: more real template reaches the caller, and adapter and primer sequence is no longer counted as sample.
 
-One number, in both pipelines:
+## Adapter lists (both pipelines)
+
+| | v1.1.8 | v1.2.1 |
+|---|---|---|
+| Illumina (`MARK-I.sh`) | `Updated_Adapter_Primer_List_Cutadapt_cleaned.txt`, 744 entries, shared | `MARK_Adapter_List_Illumina.txt`, 200 entries |
+| Nanopore (`MARK.sh`) | the same shared list | `MARK_Adapter_List_ONT.txt`, 207 entries (Illumina + Nanopore adapters) |
+
+- **Mitochondrial sequence removed.** The old list held 320 entries of mtDNA control-region sequence, plus several adapter–mtDNA chimeras. cutadapt `-a` removes a match *and everything after it*, and `-g` removes a match *and everything before it*. So each mtDNA entry cut every read containing it at a fixed position in the genome, and the remainder often failed the length filter. No entry now has a ≥15 bp exact match to the reference. `MARK_Adapter_List_v2.rebuild_log.txt` records every edit.
+- **Index barcodes removed.** These 8 bp sample indices are read in a separate index cycle and never occur in the insert. With `--overlap 5`, a chance 5 bp match could trim a real read end.
+- **Nanopore chemistry removed from the Illumina list.** Illumina libraries cannot contain it.
+- The dashboard now switches to the matching list when you change pipelines, unless you have chosen your own.
+
+## Nanopore adapter trimming (`MARK.sh`)
 
 ```
-PRIMER_TOL = 6   ->   PRIMER_TOL = 10
+v1.1.8   cutadapt -a file:LIST ...   then   cutadapt -g file:LIST ...
+v1.2.1   cutadapt -b file:LIST --times 2 ...
 ```
 
-Nothing else. The insert table, the `products` table, both primer boundaries per amplicon, the
-adapter lists and every processing step are unchanged from v1.2.
+These amplicons carry adapter at both ends of the read. `-a` treats every match as a 3′ adapter, so an adapter matched at the start of a read removed the entire read, which `--minimum-length` then discarded. `-b` treats a match that includes the read's first base as a 5′ adapter, keeping the sequence after it, and any other match as a 3′ adapter. `--times 2` lets one read lose an adapter from each end. Length floors are unchanged (`MIN_LEN=90`, `MIN_LEN_POST=90`).
 
-## Why
+## Illumina read handling (`MARK-I.sh`)
 
-`PRIMER_TOL` is how close a read end must be to a known PCR product terminus before the trimmer
-treats that end as carrying the product's primer. At 6, one population of reads was missed.
+```
+v1.1.8   fastp --merge --include_unmerged --merged_out merged.fq --length_required 90 ...
+v1.2.1   fastp --merge --trim_poly_g --merged_out merged.fq \
+               --out1 unmerged_R1.fq --out2 unmerged_R2.fq \
+               --unpaired1 rescued_R1.fq --unpaired2 rescued_R2.fq --length_required 90 ...
+```
 
-Amplicon 6's forward primer begins at lin **8249** in the untrimmed molecule. Cutadapt removes
-its first 9 bases, so **after adapter trimming — which is what the read trimmer actually sees —
-the read starts at 8258**, and 8258 is what the `products` table correctly records. Measured in
-2800M's pre-trim alignment: 85,474 reads start at 8258.
+- **`--trim_poly_g`** removes poly-G tails, which two-colour Illumina chemistry produces when a cluster gives no signal. Left in, they align with most of the read soft-clipped and add depth that is not sample.
+- **Unmerged pairs stay paired.** `--include_unmerged` placed them in the merged file as two unrelated single-end reads, so where mates overlapped, one fragment was counted twice. Now each unmerged pair goes through four steps:
+  1. it is written to `--out1`/`--out2`;
+  2. it is trimmed in paired mode (`cutadapt -a/-A`, then `-g/-G`);
+  3. it is aligned as a pair (`bwa-mem2 mem ref R1 R2`);
+  4. it is combined with the merged reads (`samtools merge`).
 
-But **1,525 reads escape adapter trimming** and still start at 8249. Those are 9 bases away from
-the table entry, past a tolerance of 6, so they matched nothing, fell through to the max-overlap
-fallback, and kept amplicon 6's primer bases at lin 8249-8270 (rCRS 16,533-16,553). In the final
-v1.2 BAM, 1,197 such reads survive with primer attached.
+  After primer trimming, the BAM passes through `samtools sort -n | samtools fixmate | samtools sort`, so mate positions stay correct and the pileup counts each fragment once.
+- **A good mate is no longer discarded with a bad one.** By default fastp drops the whole pair when either read fails filtering. `--unpaired1`/`--unpaired2` keep the read that passed, and it continues as single-end. This matters when a fault affects only one read of the pair, such as poly-G in R1.
+- **The 90 bp floor applies once, to the raw fragment.** v1.1.8 reapplied it at every cutadapt step and at the post-trim filter, which discarded valid fragments once their adapter and primer were removed. After trimming, the floor is now `MIN_LEN_POST=30`, a minimum for reliable mapping (default was 90).
 
-Amplicon 9 has the same structure — raw start 8602, adapter-trimmed start 8608, a 6-base shift —
-and matched only because 6 was exactly equal to the tolerance, with zero margin.
+## Primer trimming (both pipelines)
 
-Raising the tolerance to 10 catches both populations of both amplicons.
+**v1.1.8:** each read was assigned to the amplicon it overlapped most, then cut to fixed, non-overlapping tiles.
 
-## The size of the effect depends on the platform
+**v1.2.1:** each read end is compared with the known PCR product ends, within `PRIMER_TOL = 10` bp.
+- An end at a product start has that product's forward primer removed.
+- An end at a product end has its reverse primer removed.
+- Everything between the primers is kept, whichever amplicons it spans.
+- A read with neither end at a known product end falls back to the old rule and is clipped to a single insert.
 
-The paragraphs above describe Illumina, where only 1.7% of amplicon 6 reads escape adapter
-trimming. **On nanopore it is the majority.** The nanopore adapter trimmer does not remove the
-first nine bases of amplicon 6's primer, so 81-87% of reads start at the true primer position,
-8249, rather than 8258. At a tolerance of 6 they all missed the table entry and kept their primer.
+This gives four improvements:
 
-Measured across all 85 libraries, the share of v1.2's depth at rCRS 16,534-16,554 that was
-primer: **73% on MinION / MTC libraries (54), 77% on flongle (27), 3% on Illumina (4).** In
-v1.2.1 the depth across that footprint matches the flanking sequence within 0.4%.
+- **Fragments spanning two amplicons keep all their template.** Examples are a forward primer paired with the neighbouring amplicon's reverse primer. Previously, such a fragment was clipped to one amplicon.
+- **Primer is removed by position, not by amplicon assignment.** Primer sequence always matches the reference, so counting it as coverage can hide a real variant under its footprint.
+- **The insert table matches the ten inserts published for the PowerSeq CRM Nested System.** Adjacent inserts therefore overlap as they do in the kit, and a base covered by two amplicons counts reads from both.
+- **Reads outside every amplicon are dropped as off-target.** Previously they crashed the trimming step.
 
-Consequences across all 85 libraries: mean depth −4.9%, amplicon 5 −17% (the footprint sits
-inside amplicon 5's insert), imbalance 5.3x → 4.4x, variant calls identical in 85/85. The
-earlier "−0.6%" figure came from 13 libraries of which only nine were nanopore, and understated
-the effect.
+The tolerance matters because the number of primer bases left at the start of a read after adapter trimming varies, and differs between Illumina and nanopore. The closest termini of two different amplicons are 13 bp apart, so a tolerance of 10 cannot match the wrong amplicon.
 
-## Why 10, and why it is safe
+### Amplicon coordinates
 
-The closest two product starts are 79 bases apart, the closest two product ends 71 bases apart,
-and the closest start-to-end pair 13 bases apart. A tolerance of 10 therefore cannot make one
-amplicon's terminus match another's, nor a start match an end. It has margin at both ends: the
-largest real shift is 9 (amplicon 6), and the smallest distance to a wrong match is 13.
+The inserts are those published by Vinueza-Espinosa et al. 2023 (*Electrophoresis* 44:1423-1434). Promega does not publish the primer sequences, so the product spans are derived from the fixed read termini seen when sequencing this kit. The pipelines run against a linearized reference, `NC_012920.1_linearized`, where `rCRS = (lin + 8284) mod 16569`. Coordinates below are 1-based and inclusive.
 
-## A correction to an earlier conclusion
+| Amplicon | Insert (rCRS) | Insert (linearized) | PCR product (linearized) |
+|---|---|---|---|
+| Amp1 | 16013–16126 | 7729–7842 | 7702–7868 |
+| Amp2 | 16116–16225 | 7832–7941 | 7810–7964 |
+| Amp3 | 16223–16408 | 7939–8124 | 7913–8149 |
+| Amp4 | 16387–16486 | 8103–8202 | 8079–8225 |
+| Amp5 | 16474–30 | 8190–8315 | 8166–8337 |
+| Amp6 | 16555–152 | 8271–8437 | 8249–8465 |
+| Amp7 | 136–257 | 8421–8542 | 8394–8578 |
+| Amp8 | 246–364 | 8531–8649 | 8503–8674 |
+| Amp9 | 342–436 | 8627–8721 | 8602–8745 |
+| Amp10 | 429–592 | 8714–8877 | 8687–8904 |
 
-An earlier draft of this release changed the `products` table instead, moving Amp6 to 8249 and
-Amp9 to 8602, on the basis that those are the starts observed in a raw alignment. **That was
-wrong and has been reverted.** The raw alignment shows the molecule; the trimmer operates on
-adapter-trimmed reads, and the table has to describe what the trimmer sees. Making that change
-broke the match for the 85,474 reads that legitimately start at 8258 and left 5,359 of them
-carrying primer — measured as roughly 2.6x more retained primer sequence than v1.2, not less.
+The same coordinates ship as BED files (0-based, half-open): `CRM_Nested_inserts.bed`, `CRM_Nested_products.bed` and `CRM_Nested_primers_empirical.bed`. The pipelines carry their own copy internally and do not read these files.
 
-The lesson worth keeping: **coordinates in the `products` table are post-adapter-trim
-coordinates.** Any future re-derivation must be done on the pipeline's own `_initial_sorted.bam`,
-never on a raw alignment.
+For Amp6 and Amp9, adapter trimming usually removes the first few primer bases, so reads start at 8258 and 8608 rather than at the product starts above. The trimmer's internal table records those positions, and `PRIMER_TOL` covers both cases.
 
-## Verification before reprocessing
+### How the trimmer handles each kind of read
 
-| fragment | in | TOL=6 | TOL=10 | correct |
-|---|---|---|---|---|
-| Amp6, adapter-trimmed start | 8258-8465 | 8271-8437 | 8271-8437 | 8271-8437 |
-| **Amp6, adapter escaped** | 8249-8465 | **8249-8437** | **8271-8437** | 8271-8437 |
-| **Amp6-F escaped + Amp5-R** | 8249-8337 | **8249-8315** | **8271-8315** | 8271-8315 |
-| Amp6-F trimmed + Amp5-R | 8258-8337 | 8271-8315 | 8271-8315 | 8271-8315 |
-| Amp9, adapter-trimmed start | 8608-8745 | 8627-8721 | 8627-8721 | 8627-8721 |
-| Amp9, adapter escaped | 8602-8745 | 8627-8721 | 8627-8721 | 8627-8721 |
-| Amp4-F + Amp5-R hybrid | 8079-8337 | 8103-8315 | 8103-8315 | 8103-8315 |
-| Amp10 truncated forward read | 8687-8723 | 8714-8723 | 8714-8723 | 8714-8723 |
-| read inside Amp9's reverse primer | 8727-8745 | dropped | dropped | dropped |
+Linearized coordinates, 1-based.
 
-The two rows in bold are what this release fixes.
+| Read | What it is | Kept |
+|---|---|---|
+| 8258–8465 | Amp6 product, primer partly removed by adapter trimming | 8271–8437 |
+| 8249–8465 | Amp6 product, full primer still attached | 8271–8437 |
+| 8079–8337 | Amp4 forward primer to Amp5 reverse primer (hybrid) | 8103–8315 |
+| 8249–8337 | Amp6 forward primer to Amp5 reverse primer (hybrid) | 8271–8315 |
+| 8687–8723 | Amp10 read that stops early | 8714–8723 |
+| 8727–8745 | read lying entirely inside Amp9's reverse primer | dropped |
 
-## What the published coordinates confirm
+## Variant calling (both pipelines)
 
-Vinueza-Espinosa et al. 2023 (*Electrophoresis* 44:1423-1434) publishes this kit's ten amplicons
-in rCRS. Converted with `lin = (rCRS - 8284) mod 16569`, **all ten match our insert table
-exactly**, including the two that wrap the origin (Amp5 16474-30, Amp6 16555-152). That is an
-independent confirmation that the published coordinates are the inserts, which this pipeline has
-always assumed.
+`bcftools mpileup` now also receives `--max-idepth $PILEUP_MAX_IDEPTH`, which defaults to `PILEUP_MAX_DEPTH`. bcftools applies a separate depth cap of 250 to indel candidates. Raising `-d` alone left that cap in place, so no indels were proposed above 250×. This affects only the `annotated_all` and `qual_filtered` review VCFs; the `snps` and `clean` outputs remain SNP-only.
 
-The paper publishes inserts only, and Promega does not release the CRM primer sequences, so
-product spans still have to be derived from the data. The paper's stated amplicon size range of
-147-237 bp is a useful cross-check: eight of ours fall inside it, with Amp3 at the 237 maximum
-and Amp4 at the 147 minimum.
+## Running the pipeline
 
-On amplicon performance the paper reports amplicons **2, 3 and 8** as weakest — 3 because it is
-the largest and worst affected by fragmentation, 2 and 8 because they sit on the damage and
-heteroplasmy hotspots at 16189 and 303-315. **Amplicon 10 is not flagged**, supporting our own
-finding that DNA007's amplicon 10 failure is specific to that sample rather than a kit weakness.
+- **cutadapt can no longer hang a run.** Its multi-core mode can deadlock on macOS. Every cutadapt call now watches its output file. If the output stops growing for `CUTADAPT_STALL_SECS` seconds, the call is rerun with `--cores 1`, and a second stall stops the pipeline with an error. Output is identical either way, because cutadapt keeps reads in input order.
+- **The scripts use their own data files.** The reference, regions BED and adapter list are found beside the script, following symlinks, so command-line runs work from any directory. Explicit `ref=`, `regions_bed=` and `ADAPTER_FILE=` values still take priority. The resolved paths are recorded in `run_summary.txt`.
+- **The run folder is created beside the input.** Previously a command-line run put it in the current directory, and a folder browsed in the dashboard could place it inside the input. `OUTPUT_DIR` sets another location, which is created if missing. `RUN_NAME` names the folder, and the dashboard's Custom Run Name field now works. A run will not write into an existing folder that is not empty.
 
-## Also in v1.2.1 — cutadapt can no longer hang a run
+## New and changed settings
 
-cutadapt's multi-core mode can deadlock on macOS: its parent process waits forever on worker
-processes that have already died. It happened once during v1.2 testing — one library sat for
-four days having used four seconds of CPU — and because the pipeline had no timeout, the run
-simply stopped, with no error.
+| Setting | Default | Pipeline |
+|---|---|---|
+| `CUTADAPT_STALL_SECS` | 600 | both — new |
+| `PILEUP_MAX_IDEPTH` | same as `PILEUP_MAX_DEPTH` | both — new |
+| `OUTPUT_DIR` | the folder holding the input | both — new |
+| `RUN_NAME` | auto-generated | both — new |
+| `MIN_LEN_POST` | 30 (was 90) | `MARK-I.sh` |
 
-Every cutadapt call now goes through `run_cutadapt`, which watches the output file. If the
-output stops growing for `CUTADAPT_STALL_SECS` (default 600 s), the run is killed and repeated
-with `--cores 1`, which has no worker processes and cannot deadlock. If it stalls again, the
-pipeline stops with an error rather than skipping the sample.
+## Upgrading from v1.1.8
 
-The retry cannot change results, because cutadapt keeps reads in input order in multi-core
-mode. On `Test_M.fastq`, output through the wrapper, direct at 8 cores and direct at 1 core
-are byte-identical (4,846 reads, same MD5). Also tested: a simulated deadlock (killed, rerun
-single-core, run completes), a deadlock that persists single-core (pipeline stops with an
-error), and a cutadapt failure (exit code passed through, pipeline stops).
+- **Custom adapter lists:** pass them with `ADAPTER_FILE=` or the dashboard's adapter field. A list placed next to the input is no longer picked up, and the old file name is no longer searched for.
+- **Output location:** run folders now appear beside the input, not in the directory the script was started from.
+- **`run_summary.txt`:**
+  - Illumina reports `2_Trim3(merged)` and `2b_TrimPairs` separately, plus a count of rescued mates.
+  - Nanopore reports a single `2_AdapterTrim` step.
+  - Both record `PILEUP_IDEPTH` and the resolved reference, regions BED and adapter list paths.
 
-## Also in v1.2.1 — the scripts use their own data files, from any directory
-
-Up to v1.2 the reference, regions BED and adapter list were looked up in the current working
-directory, or beside the input folder. Started from anywhere else, a command-line run either
-stopped — `Error: 'linearized_regions.bed' not found` — or silently used whatever copy happened
-to be in that folder, which is exactly how a stale adapter list could creep back in.
-
-Bare file names now resolve to the copy shipped beside the script first, following symlinks,
-so a conda install or a repository checkout uses its own files from any directory. Explicit
-settings still win: `ref=`, `regions_bed=` and `ADAPTER_FILE=` given as paths are used exactly
-as given. The dashboard, which already passes all three explicitly, is unaffected, and its
-parser still reads the same defaults from the scripts. A custom adapter list must now be given
-through `ADAPTER_FILE` (or the dashboard's adapter field) rather than by placing a file named
-`MARK_Adapter_List_*.txt` next to the input.
-
-The resolved path of each file is recorded in the run summary under `## Reference`,
-`## Regions BED` and `## Adapter File`.
-
-Tested from an empty folder with no settings: before the fix the installed `MARK.sh` exited with
-the error above; after it, `MARK.sh` and `MARK-I.sh` both complete, resolve all three files beside
-the script, write nothing into the working directory, and still honour an explicit
-`ADAPTER_FILE`.
+Version 1.2.1 across the dashboard, both pipelines and the conda recipe.
