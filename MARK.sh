@@ -21,6 +21,7 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  threads=\"8\"              Number of CPU threads to use"
   echo -e "  MIN_DEPTH=\"10\"           Minimum depth for variant calling"
   echo -e "  QS_MIN=\"10\"              Minimum average read quality (fastplong)"
+  echo -e "  CUTADAPT_STALL_SECS=\"600\" Seconds without cutadapt output before it is killed and rerun single-core"
   echo -e "  MIN_LEN=\"90\"             Minimum read length before trimming"
   echo -e "  MAX_LEN=\"1500\"           Maximum read length (LENSAFE filter)"
   echo -e "  MIN_LEN_POST=\"90\"        Minimum read length after trimming"
@@ -52,6 +53,7 @@ MIN_LEN="${MIN_LEN:-90}"
 MIN_LEN_POST="${MIN_LEN_POST:-90}"
 MAX_LEN_POST="${MAX_LEN_POST:-300}"
 EXTRA_TRIM="${EXTRA_TRIM:-0}"
+CUTADAPT_STALL_SECS="${CUTADAPT_STALL_SECS:-600}"
 CUTADAPT_ERR="${CUTADAPT_ERR:-0.10}" 
 CUTADAPT_OVL="${CUTADAPT_OVL:-5}"    
 
@@ -153,6 +155,49 @@ run_log() {
     "$@"
     printf '\n'
   } 2>&1 | tee -a "$log_file"
+}
+
+# cutadapt's multi-core mode can deadlock on macOS: the parent process waits forever
+# on worker processes that have already died, nothing times out, and the run hangs
+# with no error. So watch the output file instead: if it stops growing for
+# CUTADAPT_STALL_SECS, kill the run and repeat it single-core, which has no worker
+# processes to lose. The output is identical either way, because cutadapt keeps reads
+# in input order in multi-core mode. A second stall is a hard error, never a skip.
+_cutadapt_out_size() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null || echo 0; }
+run_cutadapt() {
+  local args=("$@") out="" i attempt pid rc size last idle stalled
+  for ((i = 0; i < ${#args[@]}; i++)); do
+    if [[ "${args[$i]}" == "-o" ]]; then out="${args[$((i + 1))]}"; fi
+  done
+  for attempt in 1 2; do
+    if [[ -n "$out" ]]; then rm -f "$out"; fi
+    printf 'Running: cutadapt %s\n' "${args[*]}" >> "$log_file"
+    cutadapt "${args[@]}" >> "$log_file" 2>&1 &
+    pid=$!
+    last=-1; idle=0; stalled=0
+    while kill -0 "$pid" 2>/dev/null; do
+      sleep 1
+      size=$(_cutadapt_out_size "$out")
+      if [[ "$size" != "$last" ]]; then last=$size; idle=0; else idle=$((idle + 1)); fi
+      if (( idle >= CUTADAPT_STALL_SECS )) && kill -0 "$pid" 2>/dev/null; then
+        stalled=1
+        pkill -9 -P "$pid" 2>/dev/null || true
+        kill -9 "$pid" 2>/dev/null || true
+        break
+      fi
+    done
+    if wait "$pid" 2>/dev/null; then rc=0; else rc=$?; fi
+    if (( stalled == 0 )); then
+      printf '\n' >> "$log_file"
+      return "$rc"
+    fi
+    echo "[cutadapt] output stopped growing for ${CUTADAPT_STALL_SECS}s; killed and rerunning single-core" | tee -a "$log_file" >&2
+    for ((i = 0; i < ${#args[@]}; i++)); do
+      if [[ "${args[$i]}" == "--cores" ]]; then args[$((i + 1))]=1; fi
+    done
+  done
+  echo "Error: cutadapt stalled again, single-core, writing $out" | tee -a "$log_file" >&2
+  return 1
 }
 
 count_fastq_reads() {
@@ -287,7 +332,7 @@ for fq in "${files[@]}"; do
   # lose both of its adapters. Retention 27% -> 46%, panel depth +66%, and
   # soft-clipping stays at 2.9%, so the reads are no less clean than before.
   t5="$sample_out/${base}_qsGE${QS_MIN}_adaptertrim.fastq"
-  run_log cutadapt -b "file:$ADAPTER_FILE" --times 2 --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN" --cores "$threads" -o "$t5" "$qs_fq" >/dev/null
+  run_cutadapt -b "file:$ADAPTER_FILE" --times 2 --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN" --cores "$threads" -o "$t5" "$qs_fq" >/dev/null
   t5_reads=$(count_fastq_reads "$t5")
   t5_drop=$((qs_reads - t5_reads))
   t5_pct=$(awk -v d="$t5_drop" -v i="$qs_reads" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')
@@ -295,7 +340,7 @@ for fq in "${files[@]}"; do
   
   final_fq="$sample_out/${base}_qsGE${QS_MIN}_trim5_u${EXTRA_TRIM}x2.fastq"
   if [[ "$EXTRA_TRIM" -gt 0 ]]; then
-    run_log cutadapt -u "$EXTRA_TRIM" -u "-$EXTRA_TRIM" --minimum-length "$MIN_LEN" --cores "$threads" -o "$final_fq" "$t5" >/dev/null
+    run_cutadapt -u "$EXTRA_TRIM" -u "-$EXTRA_TRIM" --minimum-length "$MIN_LEN" --cores "$threads" -o "$final_fq" "$t5" >/dev/null
   else
     ln -sf "$(basename "$t5")" "$final_fq"
   fi
