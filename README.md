@@ -163,7 +163,10 @@ MARK follows the general workflow below:
    Performs platform-specific preprocessing:
    - Illumina read merging where applicable
    - Quality filtering
-   - Dual-pass 5′ and 3′ adapter/primer trimming using `cutadapt`
+   - Adapter/primer trimming using `cutadapt`. Illumina uses a 3′ pass (`-a`) followed by a
+     5′ pass (`-g`); ONT uses a single position-aware pass (`-b --times 2`), because these
+     libraries carry the adapter at both ends of the molecule and `-a` alone deletes any read
+     whose adapter is matched at the 5′ end
 
 3. **Alignment**  
    Aligns reads against a linearized mitochondrial reference:
@@ -173,7 +176,9 @@ MARK follows the general workflow below:
 4. **Track Splitting**  
    Generates two analysis tracks:
    - Baseline BAM
-   - Trimmed BAM processed using amplicon-boundary logic
+   - Trimmed BAM, in which each read is identified by its own primer ends: a read end matching
+     a known PCR product terminus has that product's primer removed, and everything between the
+     primers is kept, whichever amplicons it spans
 
 5. **Variant Calling and Annotation**  
    Uses `bcftools` for ploidy-1 variant calling and annotates specific targets, including:

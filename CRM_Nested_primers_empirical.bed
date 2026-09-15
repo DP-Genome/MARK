@@ -1,0 +1,26 @@
+# CRM Nested System - primer footprints derived empirically from fixed fragment
+# termini in 1_2800M_S5 (MARK v1.2.0 initial BAM, merged SE + proper pairs).
+# Insert coordinates are the FBI validation amplicon coordinates; the observed
+# product minus the insert gives the primer footprint at each end.
+# BED is 0-based half-open. rCRS = (lin + 8284) mod 16569.
+# columns: chrom start end name score strand
+NC_012920.1_linearized	7701	7728	Amp1_FWD	45860	+
+NC_012920.1_linearized	7842	7868	Amp1_REV	45860	-
+NC_012920.1_linearized	7809	7831	Amp2_FWD	31036	+
+NC_012920.1_linearized	7941	7964	Amp2_REV	31036	-
+NC_012920.1_linearized	7912	7938	Amp3_FWD	33675	+
+NC_012920.1_linearized	8124	8149	Amp3_REV	33675	-
+NC_012920.1_linearized	8078	8102	Amp4_FWD	17455	+
+NC_012920.1_linearized	8202	8225	Amp4_REV	17455	-
+NC_012920.1_linearized	8165	8189	Amp5_FWD	51286	+
+NC_012920.1_linearized	8315	8337	Amp5_REV	51286	-
+NC_012920.1_linearized	8248	8270	Amp6_FWD	53918	+
+NC_012920.1_linearized	8437	8465	Amp6_REV	53918	-
+NC_012920.1_linearized	8393	8420	Amp7_FWD	53101	+
+NC_012920.1_linearized	8542	8578	Amp7_REV	53101	-
+NC_012920.1_linearized	8502	8530	Amp8_FWD	51558	+
+NC_012920.1_linearized	8649	8674	Amp8_REV	51558	-
+NC_012920.1_linearized	8601	8626	Amp9_FWD	47116	+
+NC_012920.1_linearized	8721	8745	Amp9_REV	47116	-
+NC_012920.1_linearized	8686	8713	Amp10_FWD	37873	+
+NC_012920.1_linearized	8877	8904	Amp10_REV	37873	-
