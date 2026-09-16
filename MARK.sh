@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.2.1"
+VERSION="1.2.2"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"
@@ -390,7 +390,7 @@ for fq in "${files[@]}"; do
 
   # --- STEP 3: Initial Alignment ---
   bam_initial="$sample_out/${base}_initial_sorted.bam"
-  run_log bash -lc "{ minimap2 -ax map-ont -t $threads '$mmi_index' '$final_fq' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_initial'; }"
+  run_log bash -c "{ minimap2 -ax map-ont -t $threads '$mmi_index' '$final_fq' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_initial'; }"
   run_log samtools index "$bam_initial"
 
   # =========================================================================
@@ -404,7 +404,7 @@ for fq in "${files[@]}"; do
   # Baseline Variant Calling
   vcf_raw_base="$sample_out/${base}_baseline_raw.vcf"
   vcf_qual_base="$sample_out/${base}_baseline_qual_filtered.vcf"
-  run_log bash -lc "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $PILEUP_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_baseline' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_base'; }"
+  run_log bash -c "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $PILEUP_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_baseline' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_base'; }"
   run_log bcftools filter -i "QUAL>$SAFETY_QUAL && INFO/DP>=$MIN_DEPTH" -Ov -o "$vcf_qual_base" "$vcf_raw_base"
 
   # Baseline Annotation
@@ -416,8 +416,8 @@ for fq in "${files[@]}"; do
     vcf_annotated_base="$sample_out/${base}_baseline_annotated_all.vcf"
     run_log bcftools annotate -a "$sample_bed" -c CHROM,FROM,TO,RegionType -h "$sample_out/hdr.txt" -Ov -o "$vcf_annotated_base" "$vcf_qual_base"
 
-    run_log bash -lc "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_base' | bcftools filter -e 'POS=7898 || POS=7899 || POS=8595' -Ov -o '$sample_out/${base}_baseline_snps.vcf'"
-    run_log bash -lc "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_base' | bcftools filter -e 'RegionType=\"HP_Region\" || RegionType=\"Blacklist_Site\"' -Ov -o '$sample_out/${base}_baseline_clean.vcf'"
+    run_log bash -c "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_base' | bcftools filter -e 'POS=7898 || POS=7899 || POS=8595' -Ov -o '$sample_out/${base}_baseline_snps.vcf'"
+    run_log bash -c "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_base' | bcftools filter -e 'RegionType=\"HP_Region\" || RegionType=\"Blacklist_Site\"' -Ov -o '$sample_out/${base}_baseline_clean.vcf'"
     run_log bcftools filter -i 'RegionType="HP_Region"' -Ov -o "$sample_out/${base}_baseline_homopolymers.vcf" "$vcf_annotated_base"
   fi
 
@@ -657,7 +657,7 @@ for line in sys.stdin:
   # Trimmed Variant Calling
   vcf_raw_trimmed="$sample_out/${base}_trimmed_raw.vcf"
   vcf_qual_trimmed="$sample_out/${base}_trimmed_qual_filtered.vcf"
-  run_log bash -lc "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $PILEUP_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_trimmed' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_trimmed'; }"
+  run_log bash -c "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $PILEUP_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_trimmed' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_trimmed'; }"
   run_log bcftools filter -i "QUAL>$SAFETY_QUAL && INFO/DP>=$MIN_DEPTH" -Ov -o "$vcf_qual_trimmed" "$vcf_raw_trimmed"
 
   # Trimmed Annotation
@@ -665,8 +665,8 @@ for line in sys.stdin:
     vcf_annotated_trimmed="$sample_out/${base}_trimmed_annotated_all.vcf"
     run_log bcftools annotate -a "$sample_bed" -c CHROM,FROM,TO,RegionType -h "$sample_out/hdr.txt" -Ov -o "$vcf_annotated_trimmed" "$vcf_qual_trimmed"
 
-    run_log bash -lc "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_trimmed' | bcftools filter -e 'POS=7898 || POS=7899 || POS=8595' -Ov -o '$sample_out/${base}_trimmed_snps.vcf'"
-    run_log bash -lc "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_trimmed' | bcftools filter -e 'RegionType=\"HP_Region\" || RegionType=\"Blacklist_Site\"' -Ov -o '$sample_out/${base}_trimmed_clean.vcf'"
+    run_log bash -c "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_trimmed' | bcftools filter -e 'POS=7898 || POS=7899 || POS=8595' -Ov -o '$sample_out/${base}_trimmed_snps.vcf'"
+    run_log bash -c "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_trimmed' | bcftools filter -e 'RegionType=\"HP_Region\" || RegionType=\"Blacklist_Site\"' -Ov -o '$sample_out/${base}_trimmed_clean.vcf'"
     run_log bcftools filter -i 'RegionType="HP_Region"' -Ov -o "$sample_out/${base}_trimmed_homopolymers.vcf" "$vcf_annotated_trimmed"
     
 # =========================================================================
