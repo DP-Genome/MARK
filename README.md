@@ -63,7 +63,7 @@ MARK can be installed through Conda when the package is available, or run direct
 
 **Tested Installation:**
 ```bash
-conda create -n mark_env -c conda-forge -c bioconda python=3.10 biopython fastp fastplong minimap2 bwa-mem2 bcftools cutadapt fastqc samtools -y
+conda create -n mark_env -c conda-forge -c bioconda python=3.10 biopython "fastp>=1.3.7" "fastplong>=0.7.1" "minimap2>=2.31" "bwa-mem2>=2.3" "bcftools>=1.24" "cutadapt>=5.2" "fastqc>=0.12.1" "samtools>=1.24" -y
 conda activate mark_env
 git clone https://github.com/DP-Genome/MARK.git
 cd MARK

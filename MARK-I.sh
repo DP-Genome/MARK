@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.2.2"
+VERSION="1.2.4"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (Illumina) v$VERSION"
@@ -126,6 +126,116 @@ if [[ -z "$ADAPTER_FILE" ]]; then
   fi
 fi
 ADAPTER_FILE="$(mark_resolve "$ADAPTER_FILE")"
+
+# --- Exact amplicon trimming (v1.2.4) ------------------------------------------------
+# TRIM_MODE=adapters : validated path - trim with the adapter lists.
+# TRIM_MODE=primers  : trim every read at its own amplicon primers. A read is kept only if it
+#                      carries the forward AND reverse primer of the SAME amplicon, with nothing
+#                      but library adapter outside them, and is cut exactly at the outer primer
+#                      ends. The primers stay on the read on purpose: the product coordinates in
+#                      CRM_Nested_products.bed include them, and the primer-footprint step later
+#                      soft-clips them in the BAM, so no primer base reaches the caller.
+TRIM_MODE="${TRIM_MODE:-adapters}"
+[[ "$TRIM_MODE" == "adapters" || "$TRIM_MODE" == "primers" ]] || { echo "Error: TRIM_MODE must be adapters or primers (got '$TRIM_MODE')."; exit 1; }
+PRIMERS_BED="${PRIMERS_BED:-CRM_Nested_primers_empirical.bed}"
+PRIMERS_BED="$(mark_resolve "$PRIMERS_BED")"
+PRIMER_ERR="${PRIMER_ERR:-0.10}"
+PRIMER_MIN_OVERLAP="${PRIMER_MIN_OVERLAP:-3}"
+# Abort rather than silently keep almost nothing if the primers do not match the data (wrong kit).
+PRIMER_MIN_PCT="${PRIMER_MIN_PCT:-20}"
+PRIMER_WARN_PCT="${PRIMER_WARN_PCT:-40}"
+PRIMER_DIAG_READS="${PRIMER_DIAG_READS:-20000}"
+if [[ "$TRIM_MODE" == "primers" ]]; then
+  [[ -f "$PRIMERS_BED" ]] || { echo "Error: primer BED '$PRIMERS_BED' not found (needed for TRIM_MODE=primers)."; exit 1; }
+fi
+
+# Write the cutadapt primer files for this run from the BED and the reference, so they can never
+# drift from the coordinates the rest of the pipeline uses.
+build_primer_files() {
+  python3 - "$PRIMERS_BED" "$ref" "$1" <<'PYEOF'
+import sys
+bed_path, ref_path, out = sys.argv[1:4]
+seq = "".join(l.strip() for l in open(ref_path) if not l.startswith(">"))
+bed = {}
+for line in open(bed_path):
+    if line.startswith("#") or not line.strip():
+        continue
+    f = line.split("\t")
+    bed[f[3]] = (int(f[1]), int(f[2]))          # BED: 0-based, half open
+amps = ["Amp%d" % i for i in range(1, 11)]
+rc = lambda s: s[::-1].translate(str.maketrans("ACGTN", "TGCAN"))
+FWD = {a: seq[bed[a + "_FWD"][0]:bed[a + "_FWD"][1]] for a in amps}
+REV = {a: seq[bed[a + "_REV"][0]:bed[a + "_REV"][1]] for a in amps}   # + strand: end of the product
+linked = open(out + "/primers_linked.fa", "w")
+anch = open(out + "/primers_anchored.fa", "w")
+r1 = open(out + "/primers_read1.fa", "w")
+r2 = open(out + "/primers_read2.fa", "w")
+single = open(out + "/primers_single.fa", "w")
+for a in amps:
+    linked.write(">%s\n%s...%s\n" % (a, FWD[a], REV[a]))
+    anch.write(">%s\n^%s...%s$\n" % (a, FWD[a], REV[a]))
+    # --pair-adapters: entry n of the read 1 list pairs with entry n of the read 2 list
+    r1.write(">%s_F\n^%s\n>%s_R\n^%s\n" % (a, FWD[a], a, rc(REV[a])))
+    r2.write(">%s_R\n^%s\n>%s_F\n^%s\n" % (a, rc(REV[a]), a, FWD[a]))
+    single.write(">%s_F\n%s\n>%s_R\n%s\n" % (a, FWD[a], a, rc(REV[a])))
+for fh in (linked, anch, r1, r2, single):
+    fh.close()
+PYEOF
+}
+
+# reads kept per amplicon, from the amplicon name cutadapt appended to each read name
+primer_amplicon_counts() {   # $1 = fastq, $2 = label, $3 = output tsv
+  awk -v label="$2" 'NR%4==1 { n=split($1, p, "_"); a=p[n]; sub(/_[FR]$/, "", a);
+                       if (a !~ /^Amp[0-9]+$/) a="unassigned"; c[a]++ }
+       END { for (k in c) printf "%s\t%s\t%d\n", label, k, c[k] }' "$1" | sort >> "$3"
+}
+
+# Why were reads rejected? Classified on at most PRIMER_DIAG_READS of them, so the run summary can
+# separate "no primer at all", "only one primer" and "primers from two different amplicons".
+primer_reject_reasons() {    # $1 = rejected fastq, $2 = primer dir, $3 = out tsv, $4 = label
+  local n; n=$(count_fastq_reads "$1")
+  if [[ "$n" -eq 0 ]]; then printf "%s\treject_total\t0\n" "$4" >> "$3"; return; fi
+  head -n $((PRIMER_DIAG_READS * 4)) "$1" > "$1.diag.fq"
+  cutadapt -g "file:$2/primers_single.fa" --action=none --revcomp -e "$PRIMER_ERR" --times 2 \
+    --info-file "$1.diag.info" -o /dev/null "$1.diag.fq" > /dev/null 2>&1 || true
+  python3 - "$1.diag.info" "$n" "$4" <<'PYEOF' >> "$3"
+import collections, sys
+info, total, label = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+hits, seen = {}, []
+for line in open(info):
+    f = line.rstrip("\n").split("\t")
+    if len(f) < 8:
+        continue
+    name, err, adapter = f[0].split()[0], f[-10], f[-4]
+    if name not in hits:
+        seen.append(name)
+        hits[name] = set()
+    if err != "-1" and adapter != "no_adapter":
+        hits[name].add(adapter.split("_")[0])
+c = collections.Counter()
+for name in seen:
+    amps = hits[name]
+    if not amps:
+        c["no primer found"] += 1
+    elif len(amps) > 1:
+        c["primers from two amplicons"] += 1
+    else:
+        c["only one primer of one amplicon"] += 1
+scale = total / max(len(seen), 1)
+print("%s\treject_total\t%d" % (label, total))
+for reason, k in c.most_common():
+    print("%s\treject: %s\t%d" % (label, reason, round(k * scale)))
+PYEOF
+  rm -f "$1.diag.fq" "$1.diag.info"
+}
+
+# Second merge pass: pairs that fastp could not merge, quality-trimmed from the 3' end first.
+# (--cut_right in the FIRST pass is worse on every amplicon, so it is only used here.)
+MERGE2_CUT_Q="${MERGE2_CUT_Q:-20}"
+MERGE2_CUT_WINDOW="${MERGE2_CUT_WINDOW:-4}"
+MERGE2_MIN_LEN="${MERGE2_MIN_LEN:-30}"
+BWA_EXTRA="${BWA_EXTRA:-}"
+
 if [[ -z "$ADAPTER_FILE" || ! -f "$ADAPTER_FILE" ]]; then
   echo "Error: adapter file not found"
   exit 1
@@ -302,6 +412,13 @@ else
   files=("$input_path")
 fi
 
+primer_dir="$run_out/primer_files"
+if [[ "$TRIM_MODE" == "primers" ]]; then
+  mkdir -p "$primer_dir"
+  build_primer_files "$primer_dir" || { echo "Error: could not build the primer files from $PRIMERS_BED"; exit 1; }
+  echo "[Primers] built cutadapt primer files from $(basename "$PRIMERS_BED") in $primer_dir"
+fi
+
 for r1 in "${files[@]}"; do
   [[ -f "$r1" ]] || continue
 
@@ -352,8 +469,8 @@ for r1 in "${files[@]}"; do
 
   # --- STEP 1: Merge & Filter ---
   merged_fq="$sample_out/${base}_merged.fastq"
-  # Pairs fastp cannot merge are kept as a real pair rather than folded in as two
-  # independent single-end reads, so the pileup can count each fragment once.
+  # Only merged reads are aligned. Pairs fastp cannot merge are written to their own
+  # files so they can be counted and inspected, but they are not used.
   unmerged_r1="$sample_out/${base}_unmerged_R1.fastq"
   unmerged_r2="$sample_out/${base}_unmerged_R2.fastq"
   # When one mate fails filtering fastp discards the pair by default, taking a
@@ -363,12 +480,16 @@ for r1 in "${files[@]}"; do
   fp_html="$sample_out/${base}_fastp_merge.html"
   fp_json="$sample_out/${base}_fastp_merge.json"
 
+  # In primers mode a fragment is kept only if BOTH mates survive: no mate rescue.
+  rescue_args=(--unpaired1 "$rescued_r1" --unpaired2 "$rescued_r2")
+  if [[ "$TRIM_MODE" == "primers" ]]; then rescue_args=(); fi
+
   run_log fastp \
     -i "$lensafe_r1" -I "$lensafe_r2" \
     --merge --trim_poly_g \
     --merged_out "$merged_fq" \
     --out1 "$unmerged_r1" --out2 "$unmerged_r2" \
-    --unpaired1 "$rescued_r1" --unpaired2 "$rescued_r2" \
+    ${rescue_args[@]+"${rescue_args[@]}"} \
     --qualified_quality_phred "$READQ" \
     --unqualified_percent_limit "$UNQUAL_PCT" \
     --length_required "$MIN_LEN" \
@@ -387,13 +508,138 @@ for r1 in "${files[@]}"; do
   echo "[Rescue] kept $rescued_n reads whose mate failed filtering" | tee -a "$log_file"
   merged_se=$(count_fastq_reads "$merged_fq")
   unmerged_pairs=$(count_fastq_reads "$unmerged_r1")
-  merged_reads=$((merged_se + unmerged_pairs * 2))
+  merged_reads=$merged_se
+  echo "[Merge] $unmerged_pairs pairs could not be merged and are not used" | tee -a "$log_file"
   merged_drop=$((len_reads * 2 - merged_reads))
   merged_pct=$(awk -v d="$merged_drop" -v i="$((len_reads * 2))" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')
   printf "%s\t1_MergeFilter(Reads)\t%s\t%s\t%s\t%s%%\n" "$base" "$((len_reads * 2))" "$merged_reads" "$merged_drop" "$merged_pct" >> "$run_summary_file"
 
   # --- STEP 2: Preprocessing ---
   run_log fastqc "$merged_fq" -o "$sample_out" > /dev/null 2>&1
+
+  if [[ "$TRIM_MODE" == "primers" ]]; then
+    amp_stats="$sample_out/${base}_amplicon_trim.tsv"
+    : > "$amp_stats"
+    # --- pass 2: merge the leftovers after 3' quality trimming ---
+    merged2_fq="$sample_out/${base}_merged_pass2.fastq"
+    still_r1="$sample_out/${base}_unmerged2_R1.fastq"
+    still_r2="$sample_out/${base}_unmerged2_R2.fastq"
+    if [[ -s "$unmerged_r1" ]]; then
+      run_log fastp -i "$unmerged_r1" -I "$unmerged_r2" \
+        --merge --merged_out "$merged2_fq" --out1 "$still_r1" --out2 "$still_r2" \
+        --cut_right --cut_right_window_size "$MERGE2_CUT_WINDOW" --cut_right_mean_quality "$MERGE2_CUT_Q" \
+        --disable_quality_filtering --length_required "$MERGE2_MIN_LEN" --thread "$threads" \
+        --html "$sample_out/${base}_fastp_merge2.html" --json "$sample_out/${base}_fastp_merge2.json" 2> /dev/null
+    else
+      : > "$merged2_fq"; : > "$still_r1"; : > "$still_r2"
+    fi
+    merged2_n=$(count_fastq_reads "$merged2_fq")
+    still_n=$(count_fastq_reads "$still_r1")
+    printf "%s\t1b_MergePass2\t%s\t%s\t%s\t%s%%\n" "$base" "$unmerged_pairs" "$merged2_n" \
+      "$((unmerged_pairs - merged2_n))" \
+      "$(awk -v d=$((unmerged_pairs - merged2_n)) -v i="$unmerged_pairs" 'BEGIN{ if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')" \
+      >> "$run_summary_file"
+
+    # --- merged reads of both passes: must BE one whole product, primer to primer ---
+    merged_all="$sample_out/${base}_merged_all.fastq"
+    cat "$merged_fq" "$merged2_fq" > "$merged_all"
+    merged_all_n=$(count_fastq_reads "$merged_all")
+    merged_exact="$sample_out/${base}_merged_exact.fastq"
+    merged_rej="$sample_out/${base}_merged_rejected.fastq"
+    run_cutadapt -g "file:$primer_dir/primers_anchored.fa" --revcomp --action=retain \
+      --rename '{id}_{adapter_name}' --error-rate "$PRIMER_ERR" \
+      --untrimmed-output "$merged_rej" --cores "$threads" -o "$merged_exact" "$merged_all" >/dev/null
+    merged_exact_n=$(count_fastq_reads "$merged_exact")
+    printf "%s\t2_PrimerTrim(merged)\t%s\t%s\t%s\t%s%%\n" "$base" "$merged_all_n" "$merged_exact_n" \
+      "$((merged_all_n - merged_exact_n))" \
+      "$(awk -v d=$((merged_all_n - merged_exact_n)) -v i="$merged_all_n" 'BEGIN{ if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')" \
+      >> "$run_summary_file"
+    primer_reject_reasons "$merged_rej" "$primer_dir" "$amp_stats" "merged"
+    primer_amplicon_counts "$merged_exact" "kept_merged" "$amp_stats"
+
+    # --- pairs that never merged: keep only primer-verified single-amplicon pairs ---
+    # Use the ORIGINAL mates (pass 2 quality-trimmed them only to test whether they would merge).
+    pe_r1="$sample_out/${base}_pairs_exact_R1.fastq"
+    pe_r2="$sample_out/${base}_pairs_exact_R2.fastq"
+    if [[ "$still_n" -gt 0 ]]; then
+      orig_r1="$sample_out/${base}_still_orig_R1.fastq"
+      orig_r2="$sample_out/${base}_still_orig_R2.fastq"
+      awk 'NR%4==1{print substr($1,2)}' "$still_r1" > "$sample_out/${base}_still_names.txt"
+      python3 - "$sample_out/${base}_still_names.txt" "$unmerged_r1" "$unmerged_r2" "$orig_r1" "$orig_r2" <<'PYEOF'
+import sys
+names = set(l.strip() for l in open(sys.argv[1]))
+for src, dst in ((sys.argv[2], sys.argv[4]), (sys.argv[3], sys.argv[5])):
+    with open(src) as f, open(dst, "w") as o:
+        while True:
+            h = f.readline()
+            if not h:
+                break
+            rec = h + f.readline() + f.readline() + f.readline()
+            if h[1:].split()[0] in names:
+                o.write(rec)
+PYEOF
+      # cutadapt cannot rename the two mates (their primer names differ), so the amplicon is
+      # written into both read names afterwards, from the primer read 1 starts with.
+      run_cutadapt -g "file:$primer_dir/primers_read1.fa" -G "file:$primer_dir/primers_read2.fa" \
+        --pair-adapters --action=none --discard-untrimmed --error-rate "$PRIMER_ERR" \
+        --cores "$threads" -o "$pe_r1" -p "$pe_r2" "$orig_r1" "$orig_r2" >/dev/null
+      python3 - "$primer_dir/primers_read1.fa" "$PRIMER_ERR" "$pe_r1" "$pe_r2" <<'PYEOF'
+import sys
+fa, err, r1_path, r2_path = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4]
+primers, name = [], None
+for line in open(fa):
+    line = line.strip()
+    if line.startswith(">"):
+        name = line[1:]
+    elif line:
+        primers.append((name.split("_")[0], line.lstrip("^")))
+def amplicon(seq):
+    for amp, p in primers:
+        head = seq[:len(p)]
+        if len(head) == len(p) and sum(a != b for a, b in zip(head, p)) <= int(err * len(p)):
+            return amp
+    return None
+names = {}
+recs1 = open(r1_path).read().split("\n")
+def rewrite(path, lookup):
+    out = []
+    with open(path) as f:
+        while True:
+            h = f.readline()
+            if not h:
+                break
+            s, p, q = f.readline(), f.readline(), f.readline()
+            rid = h[1:].split()[0]
+            amp = lookup(rid, s.strip())
+            out.append(("@%s_%s\n" % (rid, amp) if amp else h) + s + p + q)
+    open(path, "w").write("".join(out))
+rewrite(r1_path, lambda rid, seq: names.setdefault(rid, amplicon(seq)))
+rewrite(r2_path, lambda rid, seq: names.get(rid))
+PYEOF
+      rm -f "$orig_r1" "$orig_r2" "$sample_out/${base}_still_names.txt"
+    else
+      : > "$pe_r1"; : > "$pe_r2"
+    fi
+    pe_pairs=$(count_fastq_reads "$pe_r1")
+    printf "%s\t2b_PrimerPairs\t%s\t%s\t%s\t%s%%\n" "$base" "$still_n" "$pe_pairs" \
+      "$((still_n - pe_pairs))" \
+      "$(awk -v d=$((still_n - pe_pairs)) -v i="$still_n" 'BEGIN{ if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')" \
+      >> "$run_summary_file"
+    primer_amplicon_counts "$pe_r1" "kept_paired" "$amp_stats"
+
+    kept_frag=$((merged_exact_n + pe_pairs))
+    in_frag=$((merged_all_n + still_n))
+    pct=$(awk -v k="$kept_frag" -v i="$in_frag" 'BEGIN{ if(i>0) printf "%.1f", (k/i)*100; else print "0.0" }')
+    echo "[Primers] $kept_frag of $in_frag fragments ($pct%) are a complete single-amplicon product: $merged_exact_n merged, $pe_pairs paired" | tee -a "$log_file"
+    awk -v p="$pct" -v w="$PRIMER_WARN_PCT" 'BEGIN{ exit (p+0 < w+0) ? 1 : 0 }' || \
+      echo "[Primers] WARNING: only $pct% carry a primer pair (expected >= $PRIMER_WARN_PCT%)" | tee -a "$log_file" >&2
+    awk -v p="$pct" -v m="$PRIMER_MIN_PCT" 'BEGIN{ exit (p+0 < m+0) ? 1 : 0 }' || {
+      echo "Error: only $pct% of fragments in $base carry a matching primer pair (PRIMER_MIN_PCT=$PRIMER_MIN_PCT)." | tee -a "$log_file" >&2
+      echo "       The primer BED does not describe this data. Check the kit, or set PRIMER_MIN_PCT." | tee -a "$log_file" >&2
+      exit 1; }
+    final_fq="$merged_exact"
+    rm -f "$merged_all" "$merged_rej" "$merged2_fq" "$still_r1" "$still_r2"
+  else
   
   t3="$sample_out/${base}_trim3.fastq"
   run_cutadapt -a "file:$ADAPTER_FILE" --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" --cores "$threads" -o "$t3" "$merged_fq" >/dev/null
@@ -420,27 +666,6 @@ for r1 in "${files[@]}"; do
   final_pct=$(awk -v d="$final_drop" -v i="$t5_reads" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')
   printf "%s\t4_ExtraTrim\t%s\t%s\t%s\t%s%%\n" "$base" "$t5_reads" "$final_reads" "$final_drop" "$final_pct" >> "$run_summary_file"
 
-  # --- STEP 2.4: The unmerged pairs, trimmed in paired mode ---
-  pe_r1="$sample_out/${base}_pe_trimmed_R1.fastq"
-  pe_r2="$sample_out/${base}_pe_trimmed_R2.fastq"
-  if [[ -s "$unmerged_r1" ]]; then
-    run_cutadapt -a "file:$ADAPTER_FILE" -A "file:$ADAPTER_FILE" \
-      --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" \
-      --cores "$threads" -o "$sample_out/${base}_pe3_R1.fastq" -p "$sample_out/${base}_pe3_R2.fastq" \
-      "$unmerged_r1" "$unmerged_r2" >/dev/null
-    run_cutadapt -g "file:$ADAPTER_FILE" -G "file:$ADAPTER_FILE" \
-      --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN_POST" \
-      --cores "$threads" -o "$pe_r1" -p "$pe_r2" \
-      "$sample_out/${base}_pe3_R1.fastq" "$sample_out/${base}_pe3_R2.fastq" >/dev/null
-    pe_pairs=$(count_fastq_reads "$pe_r1")
-  else
-    : > "$pe_r1"; : > "$pe_r2"; pe_pairs=0
-  fi
-  printf "%s\t2b_TrimPairs\t%s\t%s\t%s\t%s%%\n" "$base" "$unmerged_pairs" "$pe_pairs" \
-    "$((unmerged_pairs - pe_pairs))" \
-    "$(awk -v d=$((unmerged_pairs - pe_pairs)) -v i="$unmerged_pairs" 'BEGIN{ if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')" \
-    >> "$run_summary_file"
-
   # --- STEP 2.5: Post-Trim Length Filtering ---
   final_len_fq="$sample_out/${base}_trim5_u${EXTRA_TRIM}x2_lenFiltered.fastq"
   run_log fastp -i "$final_fq" -o "$final_len_fq" \
@@ -458,18 +683,19 @@ for r1 in "${files[@]}"; do
   printf "%s\t5_PostTrim_Len\t%s\t%s\t%s\t%s%%\n" "$base" "$final_reads" "$lenpost_reads" "$lenpost_drop" "$lenpost_pct" >> "$run_summary_file"
   
   final_fq="$final_len_fq"
+  fi
 
 
   # --- STEP 3: Initial Alignment ---
   bam_initial="$sample_out/${base}_initial_sorted.bam"
-  bam_se="$sample_out/${base}_se_sorted.bam"
-  bam_pe="$sample_out/${base}_pe_sorted.bam"
-  run_log bash -c "{ bwa-mem2 mem -t $threads '$ref' '$final_fq' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_se'; }"
-  if [[ -s "$pe_r1" ]]; then
-    run_log bash -c "{ bwa-mem2 mem -t $threads '$ref' '$pe_r1' '$pe_r2' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_pe'; }"
+  if [[ "$TRIM_MODE" == "primers" && "${pe_pairs:-0}" -gt 0 ]]; then
+    bam_se="$sample_out/${base}_se_sorted.bam"
+    bam_pe="$sample_out/${base}_pe_sorted.bam"
+    run_log bash -c "{ bwa-mem2 mem $BWA_EXTRA -t $threads '$ref' '$final_fq' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_se'; }"
+    run_log bash -c "{ bwa-mem2 mem $BWA_EXTRA -t $threads '$ref' '$pe_r1' '$pe_r2' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_pe'; }"
     run_log bash -c "samtools merge -f -@ $threads '$bam_initial' '$bam_se' '$bam_pe'"
   else
-    cp "$bam_se" "$bam_initial"
+    run_log bash -c "{ bwa-mem2 mem $BWA_EXTRA -t $threads '$ref' '$final_fq' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_initial'; }"
   fi
   run_log samtools index "$bam_initial"
 

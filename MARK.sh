@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.2.2"
+VERSION="1.2.4"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"
@@ -119,6 +119,190 @@ if [[ -z "$ADAPTER_FILE" ]]; then
   fi
 fi
 ADAPTER_FILE="$(mark_resolve "$ADAPTER_FILE")"
+
+# --- Exact amplicon trimming (v1.2.4) ------------------------------------------------
+# TRIM_MODE=adapters : validated path - trim with the adapter lists.
+# TRIM_MODE=primers  : trim every read at its own amplicon primers. A read is kept only if it
+#                      carries the forward AND reverse primer of the SAME amplicon, with nothing
+#                      but library adapter outside them, and is cut exactly at the outer primer
+#                      ends. The primers stay on the read on purpose: the product coordinates in
+#                      CRM_Nested_products.bed include them, and the primer-footprint step later
+#                      soft-clips them in the BAM, so no primer base reaches the caller.
+TRIM_MODE="${TRIM_MODE:-adapters}"
+[[ "$TRIM_MODE" == "adapters" || "$TRIM_MODE" == "primers" ]] || { echo "Error: TRIM_MODE must be adapters or primers (got '$TRIM_MODE')."; exit 1; }
+PRIMERS_BED="${PRIMERS_BED:-CRM_Nested_primers_empirical.bed}"
+PRIMERS_BED="$(mark_resolve "$PRIMERS_BED")"
+PRIMER_ERR="${PRIMER_ERR:-0.15}"
+PRIMER_MIN_OVERLAP="${PRIMER_MIN_OVERLAP:-18}"
+# Abort rather than silently keep almost nothing if the primers do not match the data (wrong kit).
+PRIMER_MIN_PCT="${PRIMER_MIN_PCT:-20}"
+PRIMER_WARN_PCT="${PRIMER_WARN_PCT:-25}"
+PRIMER_DIAG_READS="${PRIMER_DIAG_READS:-20000}"
+if [[ "$TRIM_MODE" == "primers" ]]; then
+  [[ -f "$PRIMERS_BED" ]] || { echo "Error: primer BED '$PRIMERS_BED' not found (needed for TRIM_MODE=primers)."; exit 1; }
+fi
+
+# Write the cutadapt primer files for this run from the BED and the reference, so they can never
+# drift from the coordinates the rest of the pipeline uses.
+build_primer_files() {
+  python3 - "$PRIMERS_BED" "$ref" "$1" <<'PYEOF'
+import sys
+bed_path, ref_path, out = sys.argv[1:4]
+seq = "".join(l.strip() for l in open(ref_path) if not l.startswith(">"))
+bed = {}
+for line in open(bed_path):
+    if line.startswith("#") or not line.strip():
+        continue
+    f = line.split("\t")
+    bed[f[3]] = (int(f[1]), int(f[2]))          # BED: 0-based, half open
+amps = ["Amp%d" % i for i in range(1, 11)]
+rc = lambda s: s[::-1].translate(str.maketrans("ACGTN", "TGCAN"))
+FWD = {a: seq[bed[a + "_FWD"][0]:bed[a + "_FWD"][1]] for a in amps}
+REV = {a: seq[bed[a + "_REV"][0]:bed[a + "_REV"][1]] for a in amps}   # + strand: end of the product
+linked = open(out + "/primers_linked.fa", "w")
+anch = open(out + "/primers_anchored.fa", "w")
+r1 = open(out + "/primers_read1.fa", "w")
+r2 = open(out + "/primers_read2.fa", "w")
+single = open(out + "/primers_single.fa", "w")
+for a in amps:
+    linked.write(">%s\n%s...%s\n" % (a, FWD[a], REV[a]))
+    anch.write(">%s\n^%s...%s$\n" % (a, FWD[a], REV[a]))
+    # --pair-adapters: entry n of the read 1 list pairs with entry n of the read 2 list
+    r1.write(">%s_F\n^%s\n>%s_R\n^%s\n" % (a, FWD[a], a, rc(REV[a])))
+    r2.write(">%s_R\n^%s\n>%s_F\n^%s\n" % (a, rc(REV[a]), a, FWD[a]))
+    single.write(">%s_F\n%s\n>%s_R\n%s\n" % (a, FWD[a], a, rc(REV[a])))
+for fh in (linked, anch, r1, r2, single):
+    fh.close()
+PYEOF
+}
+
+# reads kept per amplicon, from the amplicon name cutadapt appended to each read name
+primer_amplicon_counts() {   # $1 = fastq, $2 = label, $3 = output tsv
+  awk -v label="$2" 'NR%4==1 { n=split($1, p, "_"); a=p[n]; sub(/_[FR]$/, "", a);
+                       if (a !~ /^Amp[0-9]+$/) a="unassigned"; c[a]++ }
+       END { for (k in c) printf "%s\t%s\t%d\n", label, k, c[k] }' "$1" | sort >> "$3"
+}
+
+# Why were reads rejected? Classified on at most PRIMER_DIAG_READS of them, so the run summary can
+# separate "no primer at all", "only one primer" and "primers from two different amplicons".
+primer_reject_reasons() {    # $1 = rejected fastq, $2 = primer dir, $3 = out tsv, $4 = label
+  local n; n=$(count_fastq_reads "$1")
+  if [[ "$n" -eq 0 ]]; then printf "%s\treject_total\t0\n" "$4" >> "$3"; return; fi
+  head -n $((PRIMER_DIAG_READS * 4)) "$1" > "$1.diag.fq"
+  cutadapt -g "file:$2/primers_single.fa" --action=none --revcomp -e "$PRIMER_ERR" --times 2 \
+    --info-file "$1.diag.info" -o /dev/null "$1.diag.fq" > /dev/null 2>&1 || true
+  python3 - "$1.diag.info" "$n" "$4" <<'PYEOF' >> "$3"
+import collections, sys
+info, total, label = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+hits, seen = {}, []
+for line in open(info):
+    f = line.rstrip("\n").split("\t")
+    if len(f) < 8:
+        continue
+    name, err, adapter = f[0].split()[0], f[-10], f[-4]
+    if name not in hits:
+        seen.append(name)
+        hits[name] = set()
+    if err != "-1" and adapter != "no_adapter":
+        hits[name].add(adapter.split("_")[0])
+c = collections.Counter()
+for name in seen:
+    amps = hits[name]
+    if not amps:
+        c["no primer found"] += 1
+    elif len(amps) > 1:
+        c["primers from two amplicons"] += 1
+    else:
+        c["only one primer of one amplicon"] += 1
+scale = total / max(len(seen), 1)
+print("%s\treject_total\t%d" % (label, total))
+for reason, k in c.most_common():
+    print("%s\treject: %s\t%d" % (label, reason, round(k * scale)))
+PYEOF
+  rm -f "$1.diag.fq" "$1.diag.info"
+}
+
+# Nanopore reads still carry the sequencing adapter, so the primer match cannot be anchored.
+# Keep a read only if what lay OUTSIDE its two primers was library adapter (or nothing): this is
+# what rejects read-through products, which carry primers of two different amplicons.
+ont_flank_filter() {   # $1 = reads into cutadapt, $2 = primer-trimmed reads, $3 = output, $4 = stats tsv
+  python3 - "$1" "$2" "$3" "$4" <<'PYEOF'
+import sys
+src, trimmed, out, stats = sys.argv[1:5]
+L_JUNC, R_JUNC = "CTTCCGATCT", "AGATCGGAAG"     # adapter bases next to the amplicon on each side
+MAX_EDITS, MIN_FLANK = 3, 6
+
+def edits_at_end(flank, motif):                 # best alignment of motif to the END of flank
+    t = flank[-(len(motif) + 3):]
+    n, m = len(motif), len(t)
+    prev = [0] * (m + 1)            # a prefix of the flank may be skipped for free
+    for i in range(1, n + 1):
+        cur = [i] + [0] * m
+        for j in range(1, m + 1):
+            cur[j] = min(prev[j - 1] + (motif[i - 1] != t[j - 1]), prev[j] + 1, cur[j - 1] + 1)
+        prev = cur
+    return prev[m]                  # the motif must reach the end of the flank
+
+def edits_at_start(flank, motif):
+    return edits_at_end(flank[:len(motif) + 3][::-1], motif[::-1])
+
+rc = lambda s: s[::-1].translate(str.maketrans("ACGTN", "TGCAN"))
+
+def reads(path):
+    with open(path) as fh:
+        while True:
+            h = fh.readline()
+            if not h:
+                return
+            yield h, fh.readline().rstrip("\n"), fh.readline(), fh.readline()
+
+# A retained product must not contain library adapter INSIDE it: that is a chimera whose
+# junction happens to sit between two primer matches.
+INTERNAL = ["AATGATACGGCGACCACCGAGATCTACAC", "ACACTCTTTCCCTACACGACGCTCTTCCGATCT",
+            "AGATCGGAAGAGC", "ATCTCGTATGCCGTCTTCTGCTTG"]
+INTERNAL = INTERNAL + [x[::-1].translate(str.maketrans("ACGTN", "TGCAN")) for x in INTERNAL]
+
+kept = rejected = chimeric = 0
+src_iter = reads(src)
+src_name, src_seq = None, None
+with open(out, "w") as fh:
+    for h, seq, plus, qual in reads(trimmed):
+        name = h[1:].split()[0]
+        base = name.rsplit("_Amp", 1)[0]
+        while src_name != base:
+            try:
+                sh, sseq, _, _ = next(src_iter)
+            except StopIteration:
+                break
+            src_name, src_seq = sh[1:].split()[0], sseq
+        if src_name != base:
+            continue
+        hay = src_seq
+        i = hay.find(seq)
+        if i < 0:
+            hay = rc(src_seq)
+            i = hay.find(seq)
+        if i < 0:                                # cutadapt corrected bases; nothing to check
+            fh.write(h + seq + "\n" + plus + qual); kept += 1; continue
+        left, right = hay[:i], hay[i + len(seq):]
+        lok = len(left) < MIN_FLANK or edits_at_end(left, L_JUNC) <= MAX_EDITS
+        rok = len(right) < MIN_FLANK or edits_at_start(right, R_JUNC) <= MAX_EDITS
+        if not (lok and rok):
+            rejected += 1
+        elif any(m in seq for m in INTERNAL):
+            chimeric += 1
+        else:
+            fh.write(h + seq + "\n" + plus + qual); kept += 1
+with open(stats, "a") as fh:
+    fh.write(f"flank_filter\tkept\t{kept}\n"
+             f"flank_filter\treject: non-adapter sequence outside the primers\t{rejected}\n"
+             f"flank_filter\treject: adapter inside the product (chimera)\t{chimeric}\n")
+PYEOF
+}
+
+MINIMAP_EXTRA="${MINIMAP_EXTRA:-}"
+if [[ "$TRIM_MODE" == "primers" && -z "$MINIMAP_EXTRA" ]]; then MINIMAP_EXTRA="--end-bonus 15"; fi
+
 if [[ -z "$ADAPTER_FILE" || ! -f "$ADAPTER_FILE" ]]; then
   echo "Error: adapter file not found"
   exit 1
@@ -293,6 +477,13 @@ else
   files=("$input_path")
 fi
 
+primer_dir="$run_out/primer_files"
+if [[ "$TRIM_MODE" == "primers" ]]; then
+  mkdir -p "$primer_dir"
+  build_primer_files "$primer_dir" || { echo "Error: could not build the primer files from $PRIMERS_BED"; exit 1; }
+  echo "[Primers] built cutadapt primer files from $(basename "$PRIMERS_BED") in $primer_dir"
+fi
+
 for fq in "${files[@]}"; do
   [[ -f "$fq" ]] || continue
   found_any=true
@@ -352,8 +543,42 @@ for fq in "${files[@]}"; do
   # adapter (removing it and keeping what follows) and any other match as a
   # 3-prime adapter. --times 2 lets one read lose an adapter from each end.
   t5="$sample_out/${base}_qsGE${QS_MIN}_adaptertrim.fastq"
-  run_cutadapt -b "file:$ADAPTER_FILE" --times 2 --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN" --cores "$threads" -o "$t5" "$qs_fq" >/dev/null
-  t5_reads=$(count_fastq_reads "$t5")
+  if [[ "$TRIM_MODE" == "primers" ]]; then
+    # Cut at the amplicon's own primers. --action=retain keeps the two primer matches and removes
+    # everything outside them, which is exactly the adapter, index and flow-cell sequence.
+    amp_stats="$sample_out/${base}_amplicon_trim.tsv"
+    : > "$amp_stats"
+    primer_raw="$sample_out/${base}_primertrim_raw.fastq"
+    primer_rej="$sample_out/${base}_primertrim_rejected.fastq"
+    run_cutadapt -g "file:$primer_dir/primers_linked.fa" --revcomp --action=retain \
+      --rename '{id}_{adapter_name}' --error-rate "$PRIMER_ERR" --overlap "$PRIMER_MIN_OVERLAP" \
+      --untrimmed-output "$primer_rej" --cores "$threads" -o "$primer_raw" "$qs_fq" >/dev/null
+    primer_raw_reads=$(count_fastq_reads "$primer_raw")
+    printf "%s\t2_PrimerTrim\t%s\t%s\t%s\t%s%%\n" "$base" "$qs_reads" "$primer_raw_reads" \
+      "$((qs_reads - primer_raw_reads))" \
+      "$(awk -v d=$((qs_reads - primer_raw_reads)) -v i="$qs_reads" 'BEGIN{ if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')" \
+      >> "$run_summary_file"
+    ont_flank_filter "$qs_fq" "$primer_raw" "$t5" "$amp_stats"
+    primer_reject_reasons "$primer_rej" "$primer_dir" "$amp_stats" "primer_step"
+    primer_amplicon_counts "$t5" "kept" "$amp_stats"
+    t5_reads=$(count_fastq_reads "$t5")
+    printf "%s\t2b_FlankFilter\t%s\t%s\t%s\t%s%%\n" "$base" "$primer_raw_reads" "$t5_reads" \
+      "$((primer_raw_reads - t5_reads))" \
+      "$(awk -v d=$((primer_raw_reads - t5_reads)) -v i="$primer_raw_reads" 'BEGIN{ if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')" \
+      >> "$run_summary_file"
+    pct=$(awk -v k="$t5_reads" -v i="$qs_reads" 'BEGIN{ if(i>0) printf "%.1f", (k/i)*100; else print "0.0" }')
+    echo "[Primers] $t5_reads of $qs_reads reads ($pct%) carry both primers of one amplicon" | tee -a "$log_file"
+    awk -v p="$pct" -v w="$PRIMER_WARN_PCT" 'BEGIN{ exit (p+0 < w+0) ? 1 : 0 }' || \
+      echo "[Primers] WARNING: only $pct% carry a primer pair (expected >= $PRIMER_WARN_PCT%)" | tee -a "$log_file" >&2
+    awk -v p="$pct" -v m="$PRIMER_MIN_PCT" 'BEGIN{ exit (p+0 < m+0) ? 1 : 0 }' || {
+      echo "Error: only $pct% of reads in $base carry a matching primer pair (PRIMER_MIN_PCT=$PRIMER_MIN_PCT)." | tee -a "$log_file" >&2
+      echo "       The primer BED does not describe this data. Check the kit, or set PRIMER_MIN_PCT." | tee -a "$log_file" >&2
+      exit 1; }
+    rm -f "$primer_raw" "$primer_rej"
+  else
+    run_cutadapt -b "file:$ADAPTER_FILE" --times 2 --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN" --cores "$threads" -o "$t5" "$qs_fq" >/dev/null
+    t5_reads=$(count_fastq_reads "$t5")
+  fi
   t5_drop=$((qs_reads - t5_reads))
   t5_pct=$(awk -v d="$t5_drop" -v i="$qs_reads" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')
   printf "%s\t2_AdapterTrim\t%s\t%s\t%s\t%s%%\n" "$base" "$qs_reads" "$t5_reads" "$t5_drop" "$t5_pct" >> "$run_summary_file"
@@ -390,7 +615,9 @@ for fq in "${files[@]}"; do
 
   # --- STEP 3: Initial Alignment ---
   bam_initial="$sample_out/${base}_initial_sorted.bam"
-  run_log bash -c "{ minimap2 -ax map-ont -t $threads '$mmi_index' '$final_fq' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_initial'; }"
+  # With exact primer trimming the read ends are real template, so let the aligner reach them
+  # instead of soft-clipping an error-containing primer end (--end-bonus).
+  run_log bash -c "{ minimap2 -ax map-ont $MINIMAP_EXTRA -t $threads '$mmi_index' '$final_fq' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_initial'; }"
   run_log samtools index "$bam_initial"
 
   # =========================================================================
