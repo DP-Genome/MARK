@@ -52,8 +52,10 @@ the aligner soft-clips error-containing primer ends (exact spans 88.9% → 96.6%
 
 If fewer than `PRIMER_MIN_PCT` (default 20) per cent of reads carry a matching primer pair the run
 aborts, so a kit or primer change fails visibly instead of silently discarding everything; below
-`PRIMER_WARN_PCT` (default 25) it warns and continues. On the validation libraries the share is 24–43%,
-because most of what is sequenced is by-product; two dimer-heavy nanopore libraries sit at 16–17%.
+`PRIMER_WARN_PCT` (default 25) it warns and continues. Most of what is sequenced is by-product, so the share
+is low: 36–56% on Illumina, 16–34% on MTC-type nanopore libraries, and 6–25% on MinION and flongle
+libraries. **These defaults are provisional:** at 20% the abort would stop most MinION and flongle runs, and
+the threshold still has to be set.
 
 ## Validation
 
@@ -65,5 +67,6 @@ All 89 libraries, both platforms, against the validated v1.2.1 runs:
 - Amplicon sizes match the BED for all 10 amplicons on both platforms; exact spans 98.7–98.9%
   (Illumina) and 96.3% (nanopore).
 - No library adapter survives trimming, and no read-through product reaches the BAM.
-- Cost: nanopore keeps a median 55% of reads and 72% of mean depth; the loss is by-product, and
-  concentrated in the amplicon overlap windows.
+- Cost: nanopore keeps a median 55% of reads and 72% of mean depth, and what is dropped is by-product.
+  Where the Illumina minimum depth falls, most of the lost depth was read-through product (genuine
+  template −2 to −3%); the one real loss is amplicon 8 in one library (rCRS 286, 174x → 107x).
