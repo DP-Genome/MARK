@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.2.4"
+VERSION="1.2.5"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"
@@ -134,9 +134,11 @@ PRIMERS_BED="${PRIMERS_BED:-CRM_Nested_primers_empirical.bed}"
 PRIMERS_BED="$(mark_resolve "$PRIMERS_BED")"
 PRIMER_ERR="${PRIMER_ERR:-0.15}"
 PRIMER_MIN_OVERLAP="${PRIMER_MIN_OVERLAP:-18}"
-# Abort rather than silently keep almost nothing if the primers do not match the data (wrong kit).
-PRIMER_MIN_PCT="${PRIMER_MIN_PCT:-20}"
-PRIMER_WARN_PCT="${PRIMER_WARN_PCT:-25}"
+# A low primer-pair share never stops the run (v1.2.5). Reads without a primer pair are always
+# removed; a library below PRIMER_WARN_PCT is flagged in WARNINGS.txt, its log and the run summary,
+# so a kit or primer mismatch cannot pass unnoticed.
+PRIMER_WARN_PCT="${PRIMER_WARN_PCT:-10}"
+# Rejected reads kept for review in <library>_primer_rejects_review*.fastq: up to this many per step.
 PRIMER_DIAG_READS="${PRIMER_DIAG_READS:-20000}"
 if [[ "$TRIM_MODE" == "primers" ]]; then
   [[ -f "$PRIMERS_BED" ]] || { echo "Error: primer BED '$PRIMERS_BED' not found (needed for TRIM_MODE=primers)."; exit 1; }
@@ -185,19 +187,24 @@ primer_amplicon_counts() {   # $1 = fastq, $2 = label, $3 = output tsv
 
 # Why were reads rejected? Classified on at most PRIMER_DIAG_READS of them, so the run summary can
 # separate "no primer at all", "only one primer" and "primers from two different amplicons".
-primer_reject_reasons() {    # $1 = rejected fastq, $2 = primer dir, $3 = out tsv, $4 = label
+# The classified reads are also appended, each labelled with its reason, to the review fastq ($5).
+primer_reject_reasons() {    # $1 = rejected fastq, $2 = primer dir, $3 = out tsv, $4 = label, $5 = review fastq
   local n; n=$(count_fastq_reads "$1")
   if [[ "$n" -eq 0 ]]; then printf "%s\treject_total\t0\n" "$4" >> "$3"; return; fi
   head -n $((PRIMER_DIAG_READS * 4)) "$1" > "$1.diag.fq"
   cutadapt -g "file:$2/primers_single.fa" --action=none --revcomp -e "$PRIMER_ERR" --times 2 \
     --info-file "$1.diag.info" -o /dev/null "$1.diag.fq" > /dev/null 2>&1 || true
-  python3 - "$1.diag.info" "$n" "$4" <<'PYEOF' >> "$3"
+  python3 - "$1.diag.info" "$n" "$4" "$1.diag.fq" "$5" <<'PYEOF' >> "$3"
 import collections, sys
-info, total, label = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+info, total, label, diag_fq, review = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 hits, seen = {}, []
 for line in open(info):
     f = line.rstrip("\n").split("\t")
-    if len(f) < 8:
+    if len(f) < 8:              # no primer matched: cutadapt writes a short line (name, -1, seq, qual)
+        name = f[0].split()[0]
+        if name not in hits:
+            seen.append(name)
+            hits[name] = set()
         continue
     name, err, adapter = f[0].split()[0], f[-10], f[-4]
     if name not in hits:
@@ -205,15 +212,25 @@ for line in open(info):
         hits[name] = set()
     if err != "-1" and adapter != "no_adapter":
         hits[name].add(adapter.split("_")[0])
-c = collections.Counter()
+c, why = collections.Counter(), {}
 for name in seen:
     amps = hits[name]
     if not amps:
-        c["no primer found"] += 1
+        kind, detail = "no primer found", ""
     elif len(amps) > 1:
-        c["primers from two amplicons"] += 1
+        kind, detail = "primers from two amplicons", " (%s)" % "+".join(sorted(amps))
     else:
-        c["only one primer of one amplicon"] += 1
+        kind, detail = "only one primer of one amplicon", " (%s)" % next(iter(amps))
+    c[kind] += 1
+    why[name] = kind + detail
+with open(diag_fq) as fh, open(review, "a") as out:
+    while True:
+        h = fh.readline()
+        if not h:
+            break
+        rest = fh.readline() + fh.readline() + fh.readline()
+        name = h[1:].split()[0]
+        out.write("@%s mark_reject=%s: %s\n" % (name, label, why.get(name, "not classified")) + rest)
 scale = total / max(len(seen), 1)
 print("%s\treject_total\t%d" % (label, total))
 for reason, k in c.most_common():
@@ -222,13 +239,29 @@ PYEOF
   rm -f "$1.diag.fq" "$1.diag.info"
 }
 
+# A library whose primer-pair share is below PRIMER_WARN_PCT: never stop, but make it impossible to
+# miss - a banner on screen and in the log, and a line in WARNINGS.txt at the top of the run folder.
+flag_low_primer_share() {    # $1 = library, $2 = pct, $3 = kept, $4 = total, $5 = review file(s)
+  local w="$run_out/WARNINGS.txt"
+  [[ -f "$w" ]] || printf "# MARK v%s warnings for this run. Libraries listed here were processed, but check them.\nlibrary\tprimer_pair_pct\twarn_below_pct\tkept\tof\treview_reads\n" "$VERSION" > "$w"
+  printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$1" "$2" "$PRIMER_WARN_PCT" "$3" "$4" "$5" >> "$w"
+  {
+    echo "################################################################################"
+    echo "## WARNING: $1 - only $2% of reads carry a primer pair of one amplicon"
+    echo "##          (flag level ${PRIMER_WARN_PCT}%). The library WAS processed with the $3 reads that do."
+    echo "##          Check the kit and primer BED; rejected reads for review: $5"
+    echo "################################################################################"
+  } | tee -a "$log_file" >&2
+}
+
 # Nanopore reads still carry the sequencing adapter, so the primer match cannot be anchored.
 # Keep a read only if what lay OUTSIDE its two primers was library adapter (or nothing): this is
 # what rejects read-through products, which carry primers of two different amplicons.
-ont_flank_filter() {   # $1 = reads into cutadapt, $2 = primer-trimmed reads, $3 = output, $4 = stats tsv
-  python3 - "$1" "$2" "$3" "$4" <<'PYEOF'
+ont_flank_filter() {   # $1 = reads into cutadapt, $2 = primer-trimmed reads, $3 = output, $4 = stats tsv, $5 = review fastq
+  python3 - "$1" "$2" "$3" "$4" "$5" "$PRIMER_DIAG_READS" <<'PYEOF'
 import sys
-src, trimmed, out, stats = sys.argv[1:5]
+src, trimmed, out, stats, review, cap = sys.argv[1:7]
+cap = int(cap)
 L_JUNC, R_JUNC = "CTTCCGATCT", "AGATCGGAAG"     # adapter bases next to the amplicon on each side
 MAX_EDITS, MIN_FLANK = 3, 6
 
@@ -264,17 +297,24 @@ INTERNAL = INTERNAL + [x[::-1].translate(str.maketrans("ACGTN", "TGCAN")) for x 
 
 kept = rejected = chimeric = 0
 src_iter = reads(src)
-src_name, src_seq = None, None
+src_name, src_seq, src_qual = None, None, None
+rev = open(review, "a")
+n_rev = 0
+def to_review(reason):
+    global n_rev
+    if n_rev < cap:
+        rev.write("@%s mark_reject=adapter_check: %s\n%s\n+\n%s" % (src_name, reason, src_seq, src_qual))
+        n_rev += 1
 with open(out, "w") as fh:
     for h, seq, plus, qual in reads(trimmed):
         name = h[1:].split()[0]
         base = name.rsplit("_Amp", 1)[0]
         while src_name != base:
             try:
-                sh, sseq, _, _ = next(src_iter)
+                sh, sseq, _, squal = next(src_iter)
             except StopIteration:
                 break
-            src_name, src_seq = sh[1:].split()[0], sseq
+            src_name, src_seq, src_qual = sh[1:].split()[0], sseq, squal
         if src_name != base:
             continue
         hay = src_seq
@@ -288,11 +328,12 @@ with open(out, "w") as fh:
         lok = len(left) < MIN_FLANK or edits_at_end(left, L_JUNC) <= MAX_EDITS
         rok = len(right) < MIN_FLANK or edits_at_start(right, R_JUNC) <= MAX_EDITS
         if not (lok and rok):
-            rejected += 1
+            rejected += 1; to_review("non-adapter sequence outside the primers")
         elif any(m in seq for m in INTERNAL):
-            chimeric += 1
+            chimeric += 1; to_review("adapter inside the product (chimera)")
         else:
             fh.write(h + seq + "\n" + plus + qual); kept += 1
+rev.close()
 with open(stats, "a") as fh:
     fh.write(f"flank_filter\tkept\t{kept}\n"
              f"flank_filter\treject: non-adapter sequence outside the primers\t{rejected}\n"
@@ -558,8 +599,10 @@ for fq in "${files[@]}"; do
       "$((qs_reads - primer_raw_reads))" \
       "$(awk -v d=$((qs_reads - primer_raw_reads)) -v i="$qs_reads" 'BEGIN{ if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')" \
       >> "$run_summary_file"
-    ont_flank_filter "$qs_fq" "$primer_raw" "$t5" "$amp_stats"
-    primer_reject_reasons "$primer_rej" "$primer_dir" "$amp_stats" "primer_step"
+    review="$sample_out/${base}_primer_rejects_review.fastq"
+    : > "$review"
+    ont_flank_filter "$qs_fq" "$primer_raw" "$t5" "$amp_stats" "$review"
+    primer_reject_reasons "$primer_rej" "$primer_dir" "$amp_stats" "primer_step" "$review"
     primer_amplicon_counts "$t5" "kept" "$amp_stats"
     t5_reads=$(count_fastq_reads "$t5")
     printf "%s\t2b_FlankFilter\t%s\t%s\t%s\t%s%%\n" "$base" "$primer_raw_reads" "$t5_reads" \
@@ -568,12 +611,13 @@ for fq in "${files[@]}"; do
       >> "$run_summary_file"
     pct=$(awk -v k="$t5_reads" -v i="$qs_reads" 'BEGIN{ if(i>0) printf "%.1f", (k/i)*100; else print "0.0" }')
     echo "[Primers] $t5_reads of $qs_reads reads ($pct%) carry both primers of one amplicon" | tee -a "$log_file"
-    awk -v p="$pct" -v w="$PRIMER_WARN_PCT" 'BEGIN{ exit (p+0 < w+0) ? 1 : 0 }' || \
-      echo "[Primers] WARNING: only $pct% carry a primer pair (expected >= $PRIMER_WARN_PCT%)" | tee -a "$log_file" >&2
-    awk -v p="$pct" -v m="$PRIMER_MIN_PCT" 'BEGIN{ exit (p+0 < m+0) ? 1 : 0 }' || {
-      echo "Error: only $pct% of reads in $base carry a matching primer pair (PRIMER_MIN_PCT=$PRIMER_MIN_PCT)." | tee -a "$log_file" >&2
-      echo "       The primer BED does not describe this data. Check the kit, or set PRIMER_MIN_PCT." | tee -a "$log_file" >&2
-      exit 1; }
+    share_step="2c_PrimerPairShare"
+    if awk -v p="$pct" -v w="$PRIMER_WARN_PCT" 'BEGIN{ exit (p+0 < w+0) ? 0 : 1 }'; then
+      share_step="2c_PrimerPairShare_LOW_see_WARNINGS"
+      flag_low_primer_share "$base" "$pct" "$t5_reads" "$qs_reads" "$(basename "$review")"
+    fi
+    printf "%s\t%s\t%s\t%s\t%s\t%s%%\n" "$base" "$share_step" "$qs_reads" "$t5_reads" "$((qs_reads - t5_reads))" \
+      "$(awk -v k="$t5_reads" -v i="$qs_reads" 'BEGIN{ if(i>0) printf "%.2f", (1-k/i)*100; else print "0.00" }')" >> "$run_summary_file"
     rm -f "$primer_raw" "$primer_rej"
   else
     run_cutadapt -b "file:$ADAPTER_FILE" --times 2 --error-rate "$CUTADAPT_ERR" --overlap "$CUTADAPT_OVL" --minimum-length "$MIN_LEN" --cores "$threads" -o "$t5" "$qs_fq" >/dev/null
@@ -1068,4 +1112,12 @@ with open(het_output, "w") as out:
   echo "Completed Diagnostic Split: $base" | tee -a "$log_file"
 done
 
+if [[ -f "$run_out/WARNINGS.txt" ]]; then
+  {
+    echo "################################################################################"
+    echo "## THIS RUN HAS WARNINGS - see $run_out/WARNINGS.txt"
+    awk -F'\t' 'NR>2 { printf "##   %s: %s%% of reads carry a primer pair\n", $1, $2 }' "$run_out/WARNINGS.txt"
+    echo "################################################################################"
+  } >&2
+fi
 echo "All outputs written to: $run_out"
