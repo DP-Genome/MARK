@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.2.5"
+VERSION="1.2.6"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"
@@ -42,6 +42,7 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  CUTADAPT_STALL_SECS=\"600\" Seconds without cutadapt output before it is killed and rerun single-core"
   echo -e "  MIN_LEN=\"90\"             Minimum read length before trimming"
   echo -e "  MAX_LEN=\"1500\"           Maximum read length (LENSAFE filter)"
+  echo -e "  FASTPLONG_ADAPTER_TRIM=\"0\" TRIM_MODE=primers only: 1 = let fastplong auto-trim adapters (off by default)"
   echo -e "  MIN_LEN_POST=\"90\"        Minimum read length after trimming"
   echo -e "  MAX_LEN_POST=\"300\"       Maximum read length after trimming"
   echo -e "  EXTRA_TRIM=\"0\"           Extra bases to trim from both ends"
@@ -133,6 +134,14 @@ TRIM_MODE="${TRIM_MODE:-adapters}"
 PRIMERS_BED="${PRIMERS_BED:-CRM_Nested_primers_empirical.bed}"
 PRIMERS_BED="$(mark_resolve "$PRIMERS_BED")"
 PRIMER_ERR="${PRIMER_ERR:-0.15}"
+# fastplong guesses a library adapter for each file and trims it plus 10 more bases. In primers mode
+# those 10 bases are primer, so the read then fails the primer check: on flongle HAC it halved the
+# reads kept. The primer step already removes everything outside the primers, so in primers mode the
+# auto-trimming is off unless FASTPLONG_ADAPTER_TRIM=1. Adapters mode is unchanged.
+FASTPLONG_ADAPTER_TRIM="${FASTPLONG_ADAPTER_TRIM:-0}"
+[[ "$FASTPLONG_ADAPTER_TRIM" == "0" || "$FASTPLONG_ADAPTER_TRIM" == "1" ]] || { echo "Error: FASTPLONG_ADAPTER_TRIM must be 0 or 1 (got '$FASTPLONG_ADAPTER_TRIM')."; exit 1; }
+fastplong_extra=()
+if [[ "$TRIM_MODE" == "primers" && "$FASTPLONG_ADAPTER_TRIM" == "0" ]]; then fastplong_extra=(--disable_adapter_trimming); fi
 PRIMER_MIN_OVERLAP="${PRIMER_MIN_OVERLAP:-18}"
 # A low primer-pair share never stops the run (v1.2.5). Reads without a primer pair are always
 # removed; a library below PRIMER_WARN_PCT is flagged in WARNINGS.txt, its log and the run summary,
@@ -491,6 +500,8 @@ run_summary_file="$run_out/run_summary.txt"
   echo "##"
   echo "## --- PRE-PROCESSING & TRIMMING ---"
   echo "## MAX_LEN        : $MAX_LEN"
+  echo "## TRIM_MODE      : $TRIM_MODE"
+  echo "## FASTPLONG AUTO ADAPTER TRIM : $([[ ${#fastplong_extra[@]} -gt 0 ]] && echo off || echo on)"
   echo "## QS_MIN         : $QS_MIN"
   echo "## MIXED MATCH    : ERR=$CUTADAPT_ERR | OVL=$CUTADAPT_OVL | MIN_LEN=$MIN_LEN "
   echo "## EXTRA_TRIM     : $EXTRA_TRIM"
@@ -543,7 +554,7 @@ for fq in "${files[@]}"; do
   fp_html="$sample_out/${base}_fastplong.html"
   fp_json="$sample_out/${base}_fastplong.json"
   
-  run_log fastplong -i "$fq" -o "$maxlen_fq" --failed_out "$maxlen_failed" "$FASTPLONG_MAXLEN_FLAG" "$MAX_LEN" -h "$fp_html" -j "$fp_json"
+  run_log fastplong -i "$fq" -o "$maxlen_fq" --failed_out "$maxlen_failed" "$FASTPLONG_MAXLEN_FLAG" "$MAX_LEN" ${fastplong_extra[@]+"${fastplong_extra[@]}"} -h "$fp_html" -j "$fp_json"
   len_reads=$(count_fastq_reads "$maxlen_fq")
   len_drop=$((input_reads - len_reads))
   len_pct=$(awk -v d="$len_drop" -v i="$input_reads" 'BEGIN { if(i>0) printf "%.2f", (d/i)*100; else print "0.00" }')

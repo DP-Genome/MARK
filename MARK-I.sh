@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.2.5"
+VERSION="1.2.6"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (Illumina) v$VERSION"
