@@ -39,6 +39,13 @@ mode the auto-trimming adds nothing and costs good reads.
 - fastplong's chimera splitting is unchanged (on). Switching it off made no difference to real
   libraries in either mode.
 
+## Launcher: help for every parameter
+
+Each parameter in the launcher's table now has a "?" beside its name. Clicking it opens a short card
+that says what the setting does, which pipeline uses it (nanopore, Illumina or both), and its default
+in the selected script. The card closes with Close, Escape, or a click elsewhere.
+`DISCARD_WARN_PCT` is defined in both scripts but read by no step; its card says so.
+
 ## Evidence
 
 The auto-trimming only acts where fastplong's guess finds an adapter: in the validation data, the 9

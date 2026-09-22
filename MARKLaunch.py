@@ -61,6 +61,67 @@ class Theme:
         MONO = "DejaVu Sans Mono"
 
 
+# Help shown by the "?" beside each pipeline parameter. "used" says which pipeline reads it;
+# each text says what the setting does in plain terms. Keep in step with MARK.sh / MARK-I.sh.
+PARAM_HELP = {
+    'TRIM_MODE': ("Nanopore and Illumina",
+        "How reads are trimmed, and which reads are kept. Both modes remove the library adapters, and in "
+        "both the primer bases are soft-clipped before variant calling.\n\n"
+        "standard: adapter sequences from the adapter list are cut wherever they are found, and any read "
+        "long enough afterwards is kept. This is the validated path and the default.\n\n"
+        "exact: exact amplicon trimming. A read is kept only if it carries both primers of one amplicon, "
+        "with nothing but adapter outside them, and it is cut exactly at those primers. PCR by-products "
+        "(primer dimers, read-through and overlap products) are removed. Libraries in which few reads "
+        "carry a primer pair are listed in WARNINGS.txt; the run never stops."),
+    'FASTPLONG_ADAPTER_TRIM': ("Nanopore, exact mode only",
+        "0 (default): fastplong's automatic adapter trimming is off. fastplong guesses an adapter for each "
+        "file and trims it plus 10 more bases; in exact mode those bases are primer, so good reads were lost "
+        "(about half of them on flongle HAC data). The primer step already removes everything outside the "
+        "primers.\n\n1: turn it back on, as in v1.2.5 and earlier.\n\nIgnored in standard mode, where the "
+        "automatic trimming always stays on."),
+    'MAX_LEN': ("Nanopore and Illumina",
+        "Length safeguard, the first step: reads longer than this many bases are removed. The amplicons are "
+        "144-237 bp, so this only removes very long artefacts."),
+    'DISCARD_WARN_PCT': ("Nanopore and Illumina (not used)",
+        "Defined in both pipeline scripts, but no step currently reads it, so changing it has no effect."),
+    'QS_MIN': ("Nanopore",
+        "Reads whose mean basecaller quality (the qs score in the FASTQ header) is below this are removed. "
+        "Q10 corresponds to about 90% base accuracy."),
+    'SAFETY_QUAL': ("Nanopore and Illumina",
+        "First variant filter: calls with a quality (QUAL) at or below this value are dropped. Together with "
+        "MIN_DEPTH this produces the *_qual_filtered.vcf files that all later call sets start from."),
+    'STRICT_QUAL': ("Nanopore and Illumina",
+        "Final call sets: a single-nucleotide variant needs a quality (QUAL) above this value to enter the "
+        "snps and clean VCFs. Raising it gives fewer, more certain calls."),
+    'PILEUP_MAX_DEPTH': ("Nanopore and Illumina",
+        "The most reads bcftools looks at in one position when calling variants; beyond that it uses a "
+        "subset. Keep it above your highest coverage, or allele fractions are estimated from a sample of the "
+        "reads."),
+    'MIN_DEPTH': ("Nanopore and Illumina",
+        "Minimum read depth for a variant to be reported. Sites covered by fewer reads are dropped at the "
+        "first variant filter (see SAFETY_QUAL)."),
+    'MIN_LEN': ("Nanopore and Illumina",
+        "Illumina: the shortest merged fragment kept when read pairs are merged. Shorter fragments are "
+        "mostly primer dimers and amplicon-overlap products.\n\nNanopore, standard mode: the shortest read "
+        "kept after adapter trimming."),
+    'MIN_LEN_POST': ("Nanopore; Illumina in standard mode",
+        "The shortest read kept after trimming. Nanopore: the lower end of the final length window (both "
+        "modes). Illumina, standard mode: reads shorter than this after adapter trimming are dropped. Exact "
+        "mode on Illumina does not use it."),
+    'MAX_LEN_POST': ("Nanopore; Illumina in standard mode",
+        "The longest read kept after trimming. The longest amplicon is 237 bp, so longer reads are "
+        "by-products such as read-through products. Exact mode on Illumina does not use it."),
+    'EXTRA_TRIM': ("Nanopore; Illumina in standard mode",
+        "Extra bases removed from both ends of every read after adapter trimming. 0, the script default, "
+        "removes nothing. Exact mode on Illumina does not use it."),
+    'READQ': ("Illumina",
+        "A base counts as good quality if its Phred score is at least this value (fastp). Used with "
+        "UNQUAL_PCT when pairs are merged."),
+    'UNQUAL_PCT': ("Illumina",
+        "A read pair is dropped if more than this percentage of a read's bases are below READQ."),
+}
+
+
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
@@ -1082,9 +1143,15 @@ class MitoPipelineDashboard:
             row_bg = Theme.CARD if (row % 2 == 0) else Theme.CARD_ALT
 
             # parameter name
-            tk.Label(self.grid_frame, text=f"{var}",
-                     font=(Theme.UI, 9, "bold"),
-                     bg=row_bg, fg=Theme.TEXT).grid(row=row, column=0, sticky='ew', padx=6, pady=2, ipady=3)
+            name_cell = tk.Frame(self.grid_frame, bg=row_bg)
+            name_cell.grid(row=row, column=0, sticky='ew', padx=6, pady=2)
+            tk.Label(name_cell, text=f"{var}", font=(Theme.UI, 9, "bold"),
+                     bg=row_bg, fg=Theme.TEXT).pack(side='left', ipady=3)
+            if var in PARAM_HELP:
+                q = tk.Label(name_cell, text=" ? ", font=(Theme.UI, 8, "bold"), bg=Theme.TEAL, fg="white",
+                             cursor="hand2", padx=1, pady=0)
+                q.pack(side='left', padx=(6, 0))
+                q.bind("<Button-1>", lambda e, v=var, w=q: self.show_param_help(v, w))
 
             color = Theme.DISABLED if is_hardcoded else (Theme.SCRIPT_DEF if clean_script_val != "Not Found" else Theme.DISABLED)
             tk.Label(self.grid_frame, text=script_val,
@@ -1147,6 +1214,38 @@ class MitoPipelineDashboard:
                 state['final_label'].config(text=f"➜ {val}  (Custom Override)", foreground=Theme.OVERRIDE)
             else:
                 state['final_label'].config(text=f"➜ {clean_s_val}  (Script Default)", foreground=Theme.SCRIPT_DEF)
+
+    def show_param_help(self, var, anchor):
+        """A small card beside the "?" explaining one parameter. Closes on Escape, the button, or a click away."""
+        if getattr(self, "_help_win", None) is not None and self._help_win.winfo_exists():
+            self._help_win.destroy()
+        used, text = PARAM_HELP[var]
+        script_val = self.parse_script_defaults(self.script_path.get()).get(var, "not used by this script")
+        win = tk.Toplevel(self.root)
+        self._help_win = win
+        win.title(var)
+        win.configure(bg=Theme.BORDER)
+        win.resizable(False, False)
+        win.transient(self.root)
+        card = tk.Frame(win, bg=Theme.CARD, padx=16, pady=12)
+        card.pack(fill='both', expand=True, padx=1, pady=1)
+        tk.Label(card, text=var, font=(Theme.MONO, 11, "bold"), bg=Theme.CARD, fg=Theme.NAVY,
+                 anchor='w').pack(fill='x')
+        tk.Label(card, text=f"Used by: {used}   ·   default for {os.path.basename(self.script_path.get())}: {script_val}",
+                 font=(Theme.UI, 9), bg=Theme.CARD, fg=Theme.TEXT_MUTED, anchor='w',
+                 justify='left', wraplength=420).pack(fill='x', pady=(2, 8))
+        tk.Label(card, text=text, font=(Theme.UI, 10), bg=Theme.CARD, fg=Theme.TEXT, anchor='w',
+                 justify='left', wraplength=420).pack(fill='x')
+        ttk.Button(card, text="Close", command=win.destroy).pack(anchor='e', pady=(12, 0))
+        win.bind("<Escape>", lambda e: win.destroy())
+        win.bind("<FocusOut>", lambda e: win.after(150, lambda: win.winfo_exists() and win.focus_get() is None and win.destroy()))
+        win.update_idletasks()
+        x = anchor.winfo_rootx() + anchor.winfo_width() + 8
+        y = anchor.winfo_rooty() - 8
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        x = min(x, sw - win.winfo_width() - 10); y = min(y, sh - win.winfo_height() - 40)
+        win.geometry(f"+{x}+{y}")
+        win.focus_set()
 
     def toggle_entry_state(self, var):
         state = self.var_states[var]
