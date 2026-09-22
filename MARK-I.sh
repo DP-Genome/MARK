@@ -127,16 +127,25 @@ if [[ -z "$ADAPTER_FILE" ]]; then
 fi
 ADAPTER_FILE="$(mark_resolve "$ADAPTER_FILE")"
 
-# --- Exact amplicon trimming (v1.2.4) ------------------------------------------------
-# TRIM_MODE=adapters : validated path - trim with the adapter lists.
-# TRIM_MODE=primers  : trim every read at its own amplicon primers. A read is kept only if it
-#                      carries the forward AND reverse primer of the SAME amplicon, with nothing
-#                      but library adapter outside them, and is cut exactly at the outer primer
-#                      ends. The primers stay on the read on purpose: the product coordinates in
-#                      CRM_Nested_products.bed include them, and the primer-footprint step later
-#                      soft-clips them in the BAM, so no primer base reaches the caller.
-TRIM_MODE="${TRIM_MODE:-adapters}"
-[[ "$TRIM_MODE" == "adapters" || "$TRIM_MODE" == "primers" ]] || { echo "Error: TRIM_MODE must be adapters or primers (got '$TRIM_MODE')."; exit 1; }
+# --- Trimming mode --------------------------------------------------------------------
+# Both modes remove the library adapters, and in both the primer-footprint step later soft-clips
+# the primer bases in the BAM. They differ in how a read is cut and which reads are kept:
+# TRIM_MODE=standard : validated path - adapter sequences from the adapter list are cut wherever
+#                      they are found, and any read long enough afterwards is kept.
+# TRIM_MODE=exact    : exact amplicon trimming (v1.2.4) - every read is cut at its own amplicon
+#                      primers. A read is kept only if it carries the forward AND reverse primer of
+#                      the SAME amplicon, with nothing but library adapter outside them, and is cut
+#                      exactly at the outer primer ends. The primers stay on the read on purpose: the
+#                      product coordinates in CRM_Nested_products.bed include them, and the
+#                      primer-footprint step soft-clips them in the BAM, so no primer base reaches
+#                      the caller.
+# The v1.2.4-v1.2.6 names still work: adapters = standard, primers = exact.
+TRIM_MODE="${TRIM_MODE:-standard}"
+case "$TRIM_MODE" in
+  adapters) echo "[Note] TRIM_MODE=adapters is now called TRIM_MODE=standard"; TRIM_MODE=standard ;;
+  primers)  echo "[Note] TRIM_MODE=primers is now called TRIM_MODE=exact"; TRIM_MODE=exact ;;
+esac
+[[ "$TRIM_MODE" == "standard" || "$TRIM_MODE" == "exact" ]] || { echo "Error: TRIM_MODE must be standard or exact (got '$TRIM_MODE')."; exit 1; }
 PRIMERS_BED="${PRIMERS_BED:-CRM_Nested_primers_empirical.bed}"
 PRIMERS_BED="$(mark_resolve "$PRIMERS_BED")"
 PRIMER_ERR="${PRIMER_ERR:-0.10}"
@@ -147,8 +156,8 @@ PRIMER_MIN_OVERLAP="${PRIMER_MIN_OVERLAP:-3}"
 PRIMER_WARN_PCT="${PRIMER_WARN_PCT:-25}"
 # Rejected reads kept for review in <library>_primer_rejects_review*.fastq: up to this many per step.
 PRIMER_DIAG_READS="${PRIMER_DIAG_READS:-20000}"
-if [[ "$TRIM_MODE" == "primers" ]]; then
-  [[ -f "$PRIMERS_BED" ]] || { echo "Error: primer BED '$PRIMERS_BED' not found (needed for TRIM_MODE=primers)."; exit 1; }
+if [[ "$TRIM_MODE" == "exact" ]]; then
+  [[ -f "$PRIMERS_BED" ]] || { echo "Error: primer BED '$PRIMERS_BED' not found (needed for TRIM_MODE=exact)."; exit 1; }
 fi
 
 # Write the cutadapt primer files for this run from the BED and the reference, so they can never
@@ -414,6 +423,7 @@ run_summary_file="$run_out/run_summary.txt"
   echo "##"
   echo "## --- PRE-PROCESSING & TRIMMING ---"
   echo "## MAX_LEN        : $MAX_LEN"
+  echo "## TRIM_MODE      : $TRIM_MODE$([[ "$TRIM_MODE" == "exact" ]] && echo " (reads cut to one whole amplicon)" || echo " (adapter-list trimming)")"
   echo "## FASTP MERGE    : READQ=$READQ | UNQUAL_PCT=$UNQUAL_PCT | MIN_LEN(raw)=$MIN_LEN"
   echo "## MIXED MATCH    : ERR=$CUTADAPT_ERR | OVL=$CUTADAPT_OVL | MIN_LEN_POST=$MIN_LEN_POST "
   echo "## EXTRA_TRIM     : $EXTRA_TRIM"
@@ -445,7 +455,7 @@ else
 fi
 
 primer_dir="$run_out/primer_files"
-if [[ "$TRIM_MODE" == "primers" ]]; then
+if [[ "$TRIM_MODE" == "exact" ]]; then
   mkdir -p "$primer_dir"
   build_primer_files "$primer_dir" || { echo "Error: could not build the primer files from $PRIMERS_BED"; exit 1; }
   echo "[Primers] built cutadapt primer files from $(basename "$PRIMERS_BED") in $primer_dir"
@@ -512,9 +522,9 @@ for r1 in "${files[@]}"; do
   fp_html="$sample_out/${base}_fastp_merge.html"
   fp_json="$sample_out/${base}_fastp_merge.json"
 
-  # In primers mode a fragment is kept only if BOTH mates survive: no mate rescue.
+  # In exact mode a fragment is kept only if BOTH mates survive: no mate rescue.
   rescue_args=(--unpaired1 "$rescued_r1" --unpaired2 "$rescued_r2")
-  if [[ "$TRIM_MODE" == "primers" ]]; then rescue_args=(); fi
+  if [[ "$TRIM_MODE" == "exact" ]]; then rescue_args=(); fi
 
   run_log fastp \
     -i "$lensafe_r1" -I "$lensafe_r2" \
@@ -549,7 +559,7 @@ for r1 in "${files[@]}"; do
   # --- STEP 2: Preprocessing ---
   run_log fastqc "$merged_fq" -o "$sample_out" > /dev/null 2>&1
 
-  if [[ "$TRIM_MODE" == "primers" ]]; then
+  if [[ "$TRIM_MODE" == "exact" ]]; then
     amp_stats="$sample_out/${base}_amplicon_trim.tsv"
     : > "$amp_stats"
     # --- pass 2: merge the leftovers after 3' quality trimming ---
@@ -735,7 +745,7 @@ PYEOF
 
   # --- STEP 3: Initial Alignment ---
   bam_initial="$sample_out/${base}_initial_sorted.bam"
-  if [[ "$TRIM_MODE" == "primers" && "${pe_pairs:-0}" -gt 0 ]]; then
+  if [[ "$TRIM_MODE" == "exact" && "${pe_pairs:-0}" -gt 0 ]]; then
     bam_se="$sample_out/${base}_se_sorted.bam"
     bam_pe="$sample_out/${base}_pe_sorted.bam"
     run_log bash -c "{ bwa-mem2 mem $BWA_EXTRA -t $threads '$ref' '$final_fq' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_se'; }"

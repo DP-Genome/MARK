@@ -79,9 +79,9 @@ class MitoPipelineDashboard:
         self.stop_requested = False
 
         self.dash_defaults = {
-            'TRIM_MODE': 'adapters',        # adapters | primers (exact amplicon trimming); drop-down below
+            'TRIM_MODE': 'standard',        # standard (adapter-list trimming) | exact (exact amplicon trimming); drop-down below
             'MAX_LEN': '1500',
-            'FASTPLONG_ADAPTER_TRIM': '0',   # nanopore, TRIM_MODE=primers only: 1 = fastplong auto adapter trimming
+            'FASTPLONG_ADAPTER_TRIM': '0',   # nanopore, TRIM_MODE=exact only: 1 = fastplong auto adapter trimming
             'DISCARD_WARN_PCT': '5',
             'QS_MIN': '10',
             'SAFETY_QUAL': '20',
@@ -97,7 +97,7 @@ class MitoPipelineDashboard:
         }
 
         # parameters that take one of a fixed set of values
-        self.choice_params = {'TRIM_MODE': ['adapters', 'primers']}
+        self.choice_params = {'TRIM_MODE': ['standard', 'exact']}
 
         self.var_states = {}
         for var, default_val in self.dash_defaults.items():
