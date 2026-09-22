@@ -18,6 +18,9 @@ mode the auto-trimming adds nothing and costs good reads.
 | new setting | – | `FASTPLONG_ADAPTER_TRIM` (default `0`); `1` turns the auto-trimming back on in primers mode |
 
 - The setting is also in the launcher's parameter table, as `FASTPLONG_ADAPTER_TRIM`.
+- The launcher can now choose the trimming mode. `TRIM_MODE` is the first row of its parameter table,
+  as a drop-down (adapters / primers) that follows the script default (adapters) until overridden.
+  Before this, runs started from the launcher were always in adapters mode.
 - The run summary header records `TRIM_MODE` and whether fastplong auto-trimming was on.
 - fastplong's chimera splitting is unchanged (on). Switching it off made no difference to real
   libraries in either mode.

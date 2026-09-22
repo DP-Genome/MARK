@@ -79,6 +79,7 @@ class MitoPipelineDashboard:
         self.stop_requested = False
 
         self.dash_defaults = {
+            'TRIM_MODE': 'adapters',        # adapters | primers (exact amplicon trimming); drop-down below
             'MAX_LEN': '1500',
             'FASTPLONG_ADAPTER_TRIM': '0',   # nanopore, TRIM_MODE=primers only: 1 = fastplong auto adapter trimming
             'DISCARD_WARN_PCT': '5',
@@ -94,6 +95,9 @@ class MitoPipelineDashboard:
             'READQ': '20',
             'UNQUAL_PCT': '40',
         }
+
+        # parameters that take one of a fixed set of values
+        self.choice_params = {'TRIM_MODE': ['adapters', 'primers']}
 
         self.var_states = {}
         for var, default_val in self.dash_defaults.items():
@@ -1087,8 +1091,12 @@ class MitoPipelineDashboard:
                      foreground=color, font=(Theme.UI, 9, "bold"),
                      bg=row_bg).grid(row=row, column=1, padx=6, sticky='ew', ipady=3)
 
-            entry = ttk.Entry(self.grid_frame,
-                              textvariable=self.var_states[var]['entry_var'], width=12)
+            if var in self.choice_params:   # a fixed set of values: a drop-down, so it cannot be mistyped
+                entry = ttk.Combobox(self.grid_frame, textvariable=self.var_states[var]['entry_var'],
+                                     values=self.choice_params[var], width=10, state='readonly')
+            else:
+                entry = ttk.Entry(self.grid_frame,
+                                  textvariable=self.var_states[var]['entry_var'], width=12)
             entry.grid(row=row, column=2, padx=6, sticky='w', pady=2)
             self.var_states[var]['entry_widget'] = entry
             self.var_states[var]['entry_var'].trace_add("write", lambda *args: self.update_inline_summary())
@@ -1143,7 +1151,8 @@ class MitoPipelineDashboard:
     def toggle_entry_state(self, var):
         state = self.var_states[var]
         if state['override_var'].get():
-            state['entry_widget'].config(state='normal')
+            on = 'readonly' if isinstance(state['entry_widget'], ttk.Combobox) else 'normal'
+            state['entry_widget'].config(state=on)
         else:
             state['entry_widget'].config(state='disabled')
 
