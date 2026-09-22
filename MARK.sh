@@ -42,7 +42,7 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  CUTADAPT_STALL_SECS=\"600\" Seconds without cutadapt output before it is killed and rerun single-core"
   echo -e "  MIN_LEN=\"90\"             Minimum read length before trimming"
   echo -e "  MAX_LEN=\"1500\"           Maximum read length (LENSAFE filter)"
-  echo -e "  FASTPLONG_ADAPTER_TRIM=\"0\" TRIM_MODE=primers only: 1 = let fastplong auto-trim adapters (off by default)"
+  echo -e "  FASTPLONG_ADAPTER_TRIM=\"0\" TRIM_MODE=exact only: 1 = let fastplong auto-trim adapters (off by default)"
   echo -e "  MIN_LEN_POST=\"90\"        Minimum read length after trimming"
   echo -e "  MAX_LEN_POST=\"300\"       Maximum read length after trimming"
   echo -e "  EXTRA_TRIM=\"0\"           Extra bases to trim from both ends"
@@ -121,27 +121,36 @@ if [[ -z "$ADAPTER_FILE" ]]; then
 fi
 ADAPTER_FILE="$(mark_resolve "$ADAPTER_FILE")"
 
-# --- Exact amplicon trimming (v1.2.4) ------------------------------------------------
-# TRIM_MODE=adapters : validated path - trim with the adapter lists.
-# TRIM_MODE=primers  : trim every read at its own amplicon primers. A read is kept only if it
-#                      carries the forward AND reverse primer of the SAME amplicon, with nothing
-#                      but library adapter outside them, and is cut exactly at the outer primer
-#                      ends. The primers stay on the read on purpose: the product coordinates in
-#                      CRM_Nested_products.bed include them, and the primer-footprint step later
-#                      soft-clips them in the BAM, so no primer base reaches the caller.
-TRIM_MODE="${TRIM_MODE:-adapters}"
-[[ "$TRIM_MODE" == "adapters" || "$TRIM_MODE" == "primers" ]] || { echo "Error: TRIM_MODE must be adapters or primers (got '$TRIM_MODE')."; exit 1; }
+# --- Trimming mode --------------------------------------------------------------------
+# Both modes remove the library adapters, and in both the primer-footprint step later soft-clips
+# the primer bases in the BAM. They differ in how a read is cut and which reads are kept:
+# TRIM_MODE=standard : validated path - adapter sequences from the adapter list are cut wherever
+#                      they are found, and any read long enough afterwards is kept.
+# TRIM_MODE=exact    : exact amplicon trimming (v1.2.4) - every read is cut at its own amplicon
+#                      primers. A read is kept only if it carries the forward AND reverse primer of
+#                      the SAME amplicon, with nothing but library adapter outside them, and is cut
+#                      exactly at the outer primer ends. The primers stay on the read on purpose: the
+#                      product coordinates in CRM_Nested_products.bed include them, and the
+#                      primer-footprint step soft-clips them in the BAM, so no primer base reaches
+#                      the caller.
+# The v1.2.4-v1.2.6 names still work: adapters = standard, primers = exact.
+TRIM_MODE="${TRIM_MODE:-standard}"
+case "$TRIM_MODE" in
+  adapters) echo "[Note] TRIM_MODE=adapters is now called TRIM_MODE=standard"; TRIM_MODE=standard ;;
+  primers)  echo "[Note] TRIM_MODE=primers is now called TRIM_MODE=exact"; TRIM_MODE=exact ;;
+esac
+[[ "$TRIM_MODE" == "standard" || "$TRIM_MODE" == "exact" ]] || { echo "Error: TRIM_MODE must be standard or exact (got '$TRIM_MODE')."; exit 1; }
 PRIMERS_BED="${PRIMERS_BED:-CRM_Nested_primers_empirical.bed}"
 PRIMERS_BED="$(mark_resolve "$PRIMERS_BED")"
 PRIMER_ERR="${PRIMER_ERR:-0.15}"
-# fastplong guesses a library adapter for each file and trims it plus 10 more bases. In primers mode
+# fastplong guesses a library adapter for each file and trims it plus 10 more bases. In exact mode
 # those 10 bases are primer, so the read then fails the primer check: on flongle HAC it halved the
-# reads kept. The primer step already removes everything outside the primers, so in primers mode the
-# auto-trimming is off unless FASTPLONG_ADAPTER_TRIM=1. Adapters mode is unchanged.
+# reads kept. The primer step already removes everything outside the primers, so in exact mode the
+# auto-trimming is off unless FASTPLONG_ADAPTER_TRIM=1. Standard mode is unchanged.
 FASTPLONG_ADAPTER_TRIM="${FASTPLONG_ADAPTER_TRIM:-0}"
 [[ "$FASTPLONG_ADAPTER_TRIM" == "0" || "$FASTPLONG_ADAPTER_TRIM" == "1" ]] || { echo "Error: FASTPLONG_ADAPTER_TRIM must be 0 or 1 (got '$FASTPLONG_ADAPTER_TRIM')."; exit 1; }
 fastplong_extra=()
-if [[ "$TRIM_MODE" == "primers" && "$FASTPLONG_ADAPTER_TRIM" == "0" ]]; then fastplong_extra=(--disable_adapter_trimming); fi
+if [[ "$TRIM_MODE" == "exact" && "$FASTPLONG_ADAPTER_TRIM" == "0" ]]; then fastplong_extra=(--disable_adapter_trimming); fi
 PRIMER_MIN_OVERLAP="${PRIMER_MIN_OVERLAP:-18}"
 # A low primer-pair share never stops the run (v1.2.5). Reads without a primer pair are always
 # removed; a library below PRIMER_WARN_PCT is flagged in WARNINGS.txt, its log and the run summary,
@@ -149,8 +158,8 @@ PRIMER_MIN_OVERLAP="${PRIMER_MIN_OVERLAP:-18}"
 PRIMER_WARN_PCT="${PRIMER_WARN_PCT:-10}"
 # Rejected reads kept for review in <library>_primer_rejects_review*.fastq: up to this many per step.
 PRIMER_DIAG_READS="${PRIMER_DIAG_READS:-20000}"
-if [[ "$TRIM_MODE" == "primers" ]]; then
-  [[ -f "$PRIMERS_BED" ]] || { echo "Error: primer BED '$PRIMERS_BED' not found (needed for TRIM_MODE=primers)."; exit 1; }
+if [[ "$TRIM_MODE" == "exact" ]]; then
+  [[ -f "$PRIMERS_BED" ]] || { echo "Error: primer BED '$PRIMERS_BED' not found (needed for TRIM_MODE=exact)."; exit 1; }
 fi
 
 # Write the cutadapt primer files for this run from the BED and the reference, so they can never
@@ -351,7 +360,7 @@ PYEOF
 }
 
 MINIMAP_EXTRA="${MINIMAP_EXTRA:-}"
-if [[ "$TRIM_MODE" == "primers" && -z "$MINIMAP_EXTRA" ]]; then MINIMAP_EXTRA="--end-bonus 15"; fi
+if [[ "$TRIM_MODE" == "exact" && -z "$MINIMAP_EXTRA" ]]; then MINIMAP_EXTRA="--end-bonus 15"; fi
 
 if [[ -z "$ADAPTER_FILE" || ! -f "$ADAPTER_FILE" ]]; then
   echo "Error: adapter file not found"
@@ -500,7 +509,7 @@ run_summary_file="$run_out/run_summary.txt"
   echo "##"
   echo "## --- PRE-PROCESSING & TRIMMING ---"
   echo "## MAX_LEN        : $MAX_LEN"
-  echo "## TRIM_MODE      : $TRIM_MODE"
+  echo "## TRIM_MODE      : $TRIM_MODE$([[ "$TRIM_MODE" == "exact" ]] && echo " (reads cut to one whole amplicon)" || echo " (adapter-list trimming)")"
   echo "## FASTPLONG AUTO ADAPTER TRIM : $([[ ${#fastplong_extra[@]} -gt 0 ]] && echo off || echo on)"
   echo "## QS_MIN         : $QS_MIN"
   echo "## MIXED MATCH    : ERR=$CUTADAPT_ERR | OVL=$CUTADAPT_OVL | MIN_LEN=$MIN_LEN "
@@ -530,7 +539,7 @@ else
 fi
 
 primer_dir="$run_out/primer_files"
-if [[ "$TRIM_MODE" == "primers" ]]; then
+if [[ "$TRIM_MODE" == "exact" ]]; then
   mkdir -p "$primer_dir"
   build_primer_files "$primer_dir" || { echo "Error: could not build the primer files from $PRIMERS_BED"; exit 1; }
   echo "[Primers] built cutadapt primer files from $(basename "$PRIMERS_BED") in $primer_dir"
@@ -595,7 +604,7 @@ for fq in "${files[@]}"; do
   # adapter (removing it and keeping what follows) and any other match as a
   # 3-prime adapter. --times 2 lets one read lose an adapter from each end.
   t5="$sample_out/${base}_qsGE${QS_MIN}_adaptertrim.fastq"
-  if [[ "$TRIM_MODE" == "primers" ]]; then
+  if [[ "$TRIM_MODE" == "exact" ]]; then
     # Cut at the amplicon's own primers. --action=retain keeps the two primer matches and removes
     # everything outside them, which is exactly the adapter, index and flow-cell sequence.
     amp_stats="$sample_out/${base}_amplicon_trim.tsv"
