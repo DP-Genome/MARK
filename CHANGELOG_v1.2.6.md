@@ -36,8 +36,15 @@ mode the auto-trimming adds nothing and costs good reads.
   as a drop-down (standard / exact) that follows the script default (standard) until overridden.
   Before this, runs started from the launcher were always in standard mode.
 - The run summary header records `TRIM_MODE` and whether fastplong auto-trimming was on.
-- fastplong's chimera splitting is unchanged (on). Switching it off made no difference to real
-  libraries in either mode.
+- fastplong's chimera splitting is not set by MARK. Note that `--disable_adapter_trimming` turns it
+  off as well, because splitting looks for adapter inside a read: in exact mode no read is split.
+  This is harmless here - a chimera carries adapter inside the product, which the adapter-junction
+  check rejects - and switching splitting off on its own made no difference to real libraries.
+- `--trimming_extension 0` was tested as a way to keep the auto-trimming without the 10-base
+  overshoot. It does not help: on the reads both settings keep, exact spans fall from 91.7% to 80.7%
+  (flongle_hac_1 and _8), and the ~250 reads it adds per library are only 55-58% exact while the
+  ~180 it drops were 87-92% exact. fastplong's adapter detection is not precise enough on noisy
+  reads to stop cleanly at the adapter. Details: development/test_builds/MARK_TrimExt_Test_20260923.
 
 ## Launcher: help for every parameter
 
