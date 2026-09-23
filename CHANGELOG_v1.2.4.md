@@ -6,13 +6,16 @@ variant-calling settings and filters are unchanged.
 ## A second trimming mode: `TRIM_MODE`
 
 ```
-TRIM_MODE=adapters   the validated path, trimming with the adapter lists   (default)
-TRIM_MODE=primers    cut every read at its own amplicon primers
+TRIM_MODE=standard   trim with the adapter lists (the pre-v1.2.4 path)
+TRIM_MODE=exact      cut every read at its own amplicon primers
 ```
+
+In v1.2.4 and v1.2.5 these values were named `adapters` and `primers`, and `adapters` was the default.
+v1.2.6 renamed them (the old names still work) and made `exact` the default.
 
 Trimming with adapter lists can never be exact by construction. An adapter entry that stops one base
 short of the junction leaves a base on the read; an entry that contains primer bases cuts into the
-amplicon. In `primers` mode a read is kept only if it carries the forward **and** reverse primer of the
+amplicon. In exact mode a read is kept only if it carries the forward **and** reverse primer of the
 **same** amplicon, with nothing but library adapter outside them, and is cut exactly at the outer
 primer ends. The mapped span of a full-length product is then the product size in
 `CRM_Nested_products.bed` by construction.
@@ -28,7 +31,7 @@ primer ends. The mapped span of a full-length product is then the product size i
   only one primer, primers from two amplicons, non-adapter sequence outside the primers, adapter inside
   the product).
 
-### Illumina (`MARK-I.sh`), primers mode
+### Illumina (`MARK-I.sh`), exact mode
 
 1. fastp merge as before, but **no mate rescue**: a fragment is kept only if both mates survive.
 2. Pairs that did not merge are quality-trimmed at the 3' end (`--cut_right` Q20) and merged again.
@@ -40,7 +43,7 @@ primer ends. The mapped span of a full-length product is then the product size i
    amplicon (`--pair-adapters`), and are aligned as a pair.
 5. The `-a`/`-g` adapter-list passes are not used in this mode.
 
-### Nanopore (`MARK.sh`), primers mode
+### Nanopore (`MARK.sh`), exact mode
 
 The `-b` adapter-list pass is replaced by the linked-primer pass (`-e 0.15 -O 18`), followed by a filter
 that requires the sequence outside each primer to be the library adapter junction, and rejects a product
@@ -50,23 +53,22 @@ the aligner soft-clips error-containing primer ends (exact spans 88.9% → 96.6%
 
 ### Guard
 
-If fewer than `PRIMER_MIN_PCT` (default 20) per cent of reads carry a matching primer pair the run
-aborts, so a kit or primer change fails visibly instead of silently discarding everything; below
-`PRIMER_WARN_PCT` (default 25) it warns and continues. Most of what is sequenced is by-product, so the share
-is low: 36–56% on Illumina, 16–34% on MTC-type nanopore libraries, and 6–25% on MinION and flongle
-libraries. **These defaults are provisional:** at 20% the abort would stop most MinION and flongle runs, and
-the threshold still has to be set.
+If too few reads carry a matching primer pair, the run flags the library, so a kit or primer change is
+visible instead of silently discarding everything. Most of what is sequenced is by-product, so the
+share is low by nature: roughly a third to a half of Illumina fragments, and a sixth to a third of
+nanopore reads on good libraries. In v1.2.4 a low share aborted the run; v1.2.5 replaced that with a
+warning (see `CHANGELOG_v1.2.5.md`).
 
 ## Validation
 
-All 89 libraries, both platforms, against the validated v1.2.1 runs:
+89 libraries, both platforms, against the validated v1.2.1 runs:
 
-- Illumina: reported calls identical in 4/4 libraries; allele fractions move by at most 0.001.
-- Nanopore: identical in 79 of 81 real libraries. The two exceptions are flongle libraries with mean
-  depth 72x and 20x that had already failed.
+- Illumina: reported calls identical in all 4 libraries; allele fractions move by at most 0.001.
+- Nanopore: identical in 79 of 81 real libraries. The two exceptions are low-yield flow-cell libraries
+  with mean depth 72x and 20x that had already failed.
 - Amplicon sizes match the BED for all 10 amplicons on both platforms; exact spans 98.7–98.9%
   (Illumina) and 96.3% (nanopore).
 - No library adapter survives trimming, and no read-through product reaches the BAM.
 - Cost: nanopore keeps a median 55% of reads and 72% of mean depth, and what is dropped is by-product.
   Where the Illumina minimum depth falls, most of the lost depth was read-through product (genuine
-  template −2 to −3%); the one real loss is amplicon 8 in one library (rCRS 286, 174x → 107x).
+  template −2 to −3%); the one real loss is a single amplicon in one library (rCRS 286, 174x → 107x).

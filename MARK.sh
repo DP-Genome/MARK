@@ -124,9 +124,9 @@ ADAPTER_FILE="$(mark_resolve "$ADAPTER_FILE")"
 # --- Trimming mode --------------------------------------------------------------------
 # Both modes remove the library adapters, and in both the primer-footprint step later soft-clips
 # the primer bases in the BAM. They differ in how a read is cut and which reads are kept:
-# TRIM_MODE=standard : validated path - adapter sequences from the adapter list are cut wherever
-#                      they are found, and any read long enough afterwards is kept.
-# TRIM_MODE=exact    : exact amplicon trimming (v1.2.4) - every read is cut at its own amplicon
+# TRIM_MODE=standard : the pre-v1.2.4 path - adapter sequences from the adapter list are cut
+#                      wherever they are found, and any read long enough afterwards is kept.
+# TRIM_MODE=exact    : the default since v1.2.6 - every read is cut at its own amplicon
 #                      primers. A read is kept only if it carries the forward AND reverse primer of
 #                      the SAME amplicon, with nothing but library adapter outside them, and is cut
 #                      exactly at the outer primer ends. The primers stay on the read on purpose: the
@@ -134,7 +134,7 @@ ADAPTER_FILE="$(mark_resolve "$ADAPTER_FILE")"
 #                      primer-footprint step soft-clips them in the BAM, so no primer base reaches
 #                      the caller.
 # The v1.2.4-v1.2.6 names still work: adapters = standard, primers = exact.
-TRIM_MODE="${TRIM_MODE:-standard}"
+TRIM_MODE="${TRIM_MODE:-exact}"
 case "$TRIM_MODE" in
   adapters) echo "[Note] TRIM_MODE=adapters is now called TRIM_MODE=standard"; TRIM_MODE=standard ;;
   primers)  echo "[Note] TRIM_MODE=primers is now called TRIM_MODE=exact"; TRIM_MODE=exact ;;
@@ -144,8 +144,8 @@ PRIMERS_BED="${PRIMERS_BED:-CRM_Nested_primers_empirical.bed}"
 PRIMERS_BED="$(mark_resolve "$PRIMERS_BED")"
 PRIMER_ERR="${PRIMER_ERR:-0.15}"
 # fastplong guesses a library adapter for each file and trims it plus 10 more bases. In exact mode
-# those 10 bases are primer, so the read then fails the primer check: on flongle HAC it halved the
-# reads kept. The primer step already removes everything outside the primers, so in exact mode the
+# those 10 bases are primer, so the read then fails the primer check: on low-quality libraries this
+# halved the reads kept. The primer step already removes everything outside the primers, so in exact mode the
 # auto-trimming is off unless FASTPLONG_ADAPTER_TRIM=1. Standard mode is unchanged.
 FASTPLONG_ADAPTER_TRIM="${FASTPLONG_ADAPTER_TRIM:-0}"
 [[ "$FASTPLONG_ADAPTER_TRIM" == "0" || "$FASTPLONG_ADAPTER_TRIM" == "1" ]] || { echo "Error: FASTPLONG_ADAPTER_TRIM must be 0 or 1 (got '$FASTPLONG_ADAPTER_TRIM')."; exit 1; }
