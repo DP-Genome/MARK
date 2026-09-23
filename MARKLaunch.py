@@ -76,7 +76,7 @@ PARAM_HELP = {
     'FASTPLONG_ADAPTER_TRIM': ("Nanopore, exact mode only",
         "0 (default): fastplong's automatic adapter trimming is off. fastplong guesses an adapter for each "
         "file and trims it plus 10 more bases; in exact mode those bases are primer, so good reads were lost "
-        "(about half of them on flongle HAC data). The primer step already removes everything outside the "
+        "(about half of them on low-quality libraries). The primer step already removes everything outside the "
         "primers.\n\n1: turn it back on, as in v1.2.5 and earlier.\n\nIgnored in standard mode, where the "
         "automatic trimming always stays on."),
     'MAX_LEN': ("Nanopore and Illumina",
@@ -140,7 +140,7 @@ class MitoPipelineDashboard:
         self.stop_requested = False
 
         self.dash_defaults = {
-            'TRIM_MODE': 'standard',        # standard (adapter-list trimming) | exact (exact amplicon trimming); drop-down below
+            'TRIM_MODE': 'exact',           # exact (exact amplicon trimming, default) | standard (adapter-list trimming); drop-down below
             'MAX_LEN': '1500',
             'FASTPLONG_ADAPTER_TRIM': '0',   # nanopore, TRIM_MODE=exact only: 1 = fastplong auto adapter trimming
             'DISCARD_WARN_PCT': '5',

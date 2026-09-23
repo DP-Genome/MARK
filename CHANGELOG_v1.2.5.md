@@ -4,9 +4,9 @@ This release includes everything in v1.2.4 (see `CHANGELOG_v1.2.4.md`). Nothing 
 alignment, calling or filtering: the same reads reach the BAM as in v1.2.4. v1.2.4 remains available
 as a fallback.
 
-## What changed (TRIM_MODE=primers only)
+## What changed (TRIM_MODE=exact only)
 
-In primers mode, reads without a primer pair of one amplicon are removed, exactly as before. What
+In exact mode, reads without a primer pair of one amplicon are removed, exactly as before. What
 changes is what happens when a library has only a small share of such reads.
 
 | | v1.2.4 | v1.2.5 |
@@ -53,15 +53,15 @@ pairs that are kept are the same.
 - **Reject reasons in the run summary.** In v1.2.4, rejected reads with no primer match at all were
   never counted, so "no primer found" was missing from `<library>_amplicon_trim.tsv`. Those reads
   were spread across "only one primer" and "primers from two amplicons". They are now counted
-  (e.g. flongle_hac_1: 1,680 of 33,363 rejects). Which reads are kept is unaffected.
+  (in one low-yield library, 1,680 of 33,363 rejected reads). Which reads are kept is unaffected.
 
 ## Verified
 
-On MTC barcode16, flongle_hac_1 and Illumina 2800M, v1.2.5 keeps exactly the same reads as v1.2.4
-(identical read names in the final BAM), and the snps and clean VCFs are identical.
+On a nanopore library, a low-yield flow-cell library and an Illumina library, v1.2.5 keeps exactly the
+same reads as v1.2.4 (identical read names in the final BAM), and the snps and clean VCFs are identical.
 
-- flongle_hac_1 (6.2%) was flagged and processed.
-- Illumina 2800M (43%) was flagged only when the flag level was raised to 50% for the test.
+- The low-yield library (6.2% of reads carrying a primer pair) was flagged and still processed.
+- The Illumina library (43%) was flagged only when the flag level was raised to 50% for the test.
 
 ## Also
 
