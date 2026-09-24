@@ -49,26 +49,24 @@ The `-b` adapter-list pass is replaced by the linked-primer pass (`-e 0.15 -O 18
 that requires the sequence outside each primer to be the library adapter junction, and rejects a product
 that contains adapter **inside** it (a chimera whose junction falls between two primer matches).
 `minimap2` gains `--end-bonus 15`: with exact trimming the read ends are real template, and without it
-the aligner soft-clips error-containing primer ends (exact spans 88.9% → 96.6%, calls unchanged).
+the aligner soft-clips error-containing primer ends. The flag markedly raises the share of reads that
+span their amplicon exactly, and leaves calls unchanged.
 
 ### Guard
 
 If too few reads carry a matching primer pair, the run flags the library, so a kit or primer change is
 visible instead of silently discarding everything. Most of what is sequenced is by-product, so the
-share is low by nature: roughly a third to a half of Illumina fragments, and a sixth to a third of
-nanopore reads on good libraries. In v1.2.4 a low share aborted the run; v1.2.5 replaced that with a
-warning (see `CHANGELOG_v1.2.5.md`).
+share is a minority of reads by nature, and varies widely between libraries. In v1.2.4 a low share
+aborted the run; v1.2.5 replaced that with a warning (see `CHANGELOG_v1.2.5.md`).
 
 ## Validation
 
-89 libraries, both platforms, against the validated v1.2.1 runs:
+The full validation set, both platforms, against the validated v1.2.1 runs:
 
-- Illumina: reported calls identical in all 4 libraries; allele fractions move by at most 0.001.
-- Nanopore: identical in 79 of 81 real libraries. The two exceptions are low-yield flow-cell libraries
-  with mean depth 72x and 20x that had already failed.
-- Amplicon sizes match the BED for all 10 amplicons on both platforms; exact spans 98.7–98.9%
-  (Illumina) and 96.3% (nanopore).
+- Illumina: reported calls identical, with allele fractions essentially unchanged.
+- Nanopore: calls identical except in libraries that had already failed on depth.
+- Amplicon sizes match the BED for all 10 amplicons on both platforms, and nearly every read spans its
+  amplicon exactly.
 - No library adapter survives trimming, and no read-through product reaches the BAM.
-- Cost: nanopore keeps a median 55% of reads and 72% of mean depth, and what is dropped is by-product.
-  Where the Illumina minimum depth falls, most of the lost depth was read-through product (genuine
-  template −2 to −3%); the one real loss is a single amplicon in one library (rCRS 286, 174x → 107x).
+- Cost: read count and mean depth fall, more so on nanopore, and what is dropped is by-product. Where
+  a minimum depth falls, most of the lost depth was read-through product rather than genuine template.

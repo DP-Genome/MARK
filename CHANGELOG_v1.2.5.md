@@ -18,8 +18,8 @@ changes is what happens when a library has only a small share of such reads.
 | rejected reads | classified on a sample, then deleted | the same sample is kept, labelled, in a review FASTQ for **every** library |
 
 Why: the share of reads with a primer pair varies widely between good libraries, because most of
-what is sequenced is PCR by-product. Across the 89 validation libraries it ran from 6.2% to 55.9%
-(median 16.5%), and a 20% stop would have halted 52 of 85 nanopore libraries. A stop also ended the
+what is sequenced is PCR by-product. Across the validation set that share ranged from a few per cent
+to more than half, so the old 20% stop would have halted most nanopore runs. A stop also ended the
 whole run, not just the library. The kept reads of a low-share library are clean, primer-verified
 products, so there is no reason to discard them.
 
@@ -44,7 +44,7 @@ primer step, with the reason in the read header (`mark_reject=...`):
   - `<library>_primer_rejects_review_R1.fastq` and `_R2.fastq`: unmerged pairs whose mates do not
     start with the two primers of one amplicon
 
-At the defaults each file is about 7–13 MB (measured on the test libraries). Illumina's pair check now writes rejected pairs to
+At the defaults each file is a few megabytes. Illumina's pair check now writes rejected pairs to
 a file instead of discarding them (`--untrimmed-output` in place of `--discard-untrimmed`). The
 pairs that are kept are the same.
 
@@ -53,15 +53,15 @@ pairs that are kept are the same.
 - **Reject reasons in the run summary.** In v1.2.4, rejected reads with no primer match at all were
   never counted, so "no primer found" was missing from `<library>_amplicon_trim.tsv`. Those reads
   were spread across "only one primer" and "primers from two amplicons". They are now counted
-  (in one low-yield library, 1,680 of 33,363 rejected reads). Which reads are kept is unaffected.
+  (a few per cent of the rejected reads in a low-yield library). Which reads are kept is unaffected.
 
 ## Verified
 
-On a nanopore library, a low-yield flow-cell library and an Illumina library, v1.2.5 keeps exactly the
-same reads as v1.2.4 (identical read names in the final BAM), and the snps and clean VCFs are identical.
+On nanopore and Illumina libraries, including a low-yield one, v1.2.5 keeps exactly the same reads as
+v1.2.4 (identical read names in the final BAM), and the snps and clean VCFs are identical.
 
-- The low-yield library (6.2% of reads carrying a primer pair) was flagged and still processed.
-- The Illumina library (43%) was flagged only when the flag level was raised to 50% for the test.
+- A library whose primer-pair share fell below the flag level was flagged and still processed.
+- A library above the level was flagged only when the level was raised for the test.
 
 ## Also
 

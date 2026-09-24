@@ -23,8 +23,8 @@ TRIM_MODE=standard   trim with the adapter lists                  (the pre-v1.2.
 
 **What to expect when you upgrade without setting anything:**
 
-- Read counts and depth drop, because by-product is removed. Nanopore keeps a median 55% of reads and
-  72% of mean depth.
+- Read counts and depth drop, because by-product is removed. The drop is larger on nanopore than on
+  Illumina, and larger in libraries carrying more by-product.
 - The mapped span of a full-length product equals the product size in `CRM_Nested_products.bed`.
 - Read names carry the amplicon their primer pair identified (`..._Amp7`).
 - On Illumina, a pair is kept only if **both** mates pass filtering (no mate rescue). A library whose
@@ -32,10 +32,9 @@ TRIM_MODE=standard   trim with the adapter lists                  (the pre-v1.2.
 
 **To keep the old behaviour:** `TRIM_MODE=standard`, or pick it in the launcher.
 
-Validation: across 89 libraries, reported calls were identical to v1.2.1 in all 4 Illumina libraries
-and in 79 of 81 real nanopore libraries (the 2 exceptions were low-yield flow-cell libraries that had
-already failed, mean depth 72x and 20x). Amplicon sizes match the BED for all 10 amplicons; exact
-spans are 98.7–98.9% (Illumina) and 96.3% (nanopore).
+Validation: across the full validation set on both platforms, reported calls were unchanged from
+v1.2.1, apart from libraries that had already failed on depth. Amplicon sizes match the BED for all
+10 amplicons, and nearly every read spans its amplicon exactly.
 
 ## 2. New and changed environment variables
 
@@ -119,17 +118,18 @@ single-core; the output is identical.
 
 ## 7. Known limitations
 
-- **Depth is lower in exact mode**, by design: by-product is removed. Nanopore keeps a median 55% of
-  reads and 72% of mean depth.
+- **Depth is lower in exact mode**, by design: by-product is removed. Expect a noticeable drop in
+  read count and depth, larger on nanopore than on Illumina.
 - **No mate rescue in exact mode.** If read 1 is a dark cluster over one amplicon, that amplicon can
   lose almost all of its depth even though read 2 is fine. Check the per-amplicon counts in the run
   summary, or use `TRIM_MODE=standard` for such a library.
-- **fastplong's own quality filter** (its Q15 default, which MARK does not set) removes 3–4% of whole
-  products on good nanopore libraries, and far more on low-quality ones.
+- **fastplong's own quality filter** (its Q15 default, which MARK does not set) removes a small share
+  of whole products on good nanopore libraries, and a much larger share on low-quality ones.
 - Reported calls are SNVs; indels are not reported in the main VCFs, unchanged from earlier releases.
 
 ## 8. Upgrading
 
 - Nothing to change for calling: the variant filters are the same.
-- Expect fewer reads and lower depth than v1.2.1 on the same data, because by-product is removed.
+- Expect fewer reads and lower depth than v1.2.1 on the same data, because by-product is removed,
+  alongside cleaner amplicon boundaries and a higher share of reads that are a whole product.
 - To reproduce v1.2.1-style read retention, set `TRIM_MODE=standard`.
