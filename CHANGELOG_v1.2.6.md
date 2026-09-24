@@ -8,7 +8,7 @@ auto-trimming is switched off in that mode. Variant-calling settings and filters
 ## Exact amplicon trimming is now the default
 
 `TRIM_MODE` defaults to `exact` from this release (it was `adapters`/`standard` in v1.2.4 and v1.2.5).
-Exact trimming was validated against the v1.2.1 release on 89 libraries with identical calls, and it
+Exact trimming was validated against the v1.2.1 release across the validation set with identical calls, and it
 is what removes PCR by-product from the BAM. To keep the pre-v1.2.4 behaviour, set
 `TRIM_MODE=standard`, or choose it in the launcher.
 
@@ -16,8 +16,7 @@ What changes for a run that does not set `TRIM_MODE`:
 
 - Reads are cut exactly at their own amplicon primers, and a read is kept only if it carries both
   primers of one amplicon. PCR by-product (primer dimers, read-through and amplicon-overlap products)
-  no longer reaches the BAM, so **read counts and depth drop**: nanopore keeps a median 55% of reads
-  and 72% of mean depth.
+  no longer reaches the BAM, so **read counts and depth drop**, more so on nanopore than on Illumina.
 - Illumina pairs are kept only when both mates pass filtering (no mate rescue). A library whose read 1
   is a dark cluster over one amplicon can therefore lose that amplicon; check the run summary.
 - Read names carry the amplicon their primer pair identified (`..._Amp7`).
@@ -59,10 +58,9 @@ mode the auto-trimming adds nothing and costs good reads.
   This is harmless here - a chimera carries adapter inside the product, which the adapter-junction
   check rejects - and switching splitting off on its own made no difference to real libraries.
 - `--trimming_extension 0` was tested as a way to keep the auto-trimming without the 10-base
-  overshoot. It does not help: on the reads both settings keep, exact spans fall from 91.7% to 80.7%
-  on low-quality libraries, and the ~250 reads it adds per library are only 55-58% exact while the
-  ~180 it drops were 87-92% exact. fastplong's adapter detection is not precise enough on noisy
-  reads to stop cleanly at the adapter. Details: development/test_builds/MARK_TrimExt_Test_20260923.
+  overshoot. It does not help: the reads kept either way end up spanning their amplicon less exactly,
+  and the reads it adds are markedly less exact than the ones it drops. fastplong's adapter detection
+  is not precise enough on noisy reads to stop cleanly at the adapter.
 
 ## Launcher: help for every parameter
 
@@ -74,15 +72,14 @@ in the selected script. The card closes with Close, Escape, or a click elsewhere
 ## Evidence
 
 The auto-trimming only acts where fastplong's guess finds an adapter: in the validation data, the 9
-libraries basecalled with the fast model, and in unclassified barcode bins. It touched 0 reads in every
-library basecalled with the high-accuracy model. With it off in exact mode, on 9 such libraries:
+libraries basecalled with the fast model, and in unclassified barcode bins; it touched no reads in
+libraries basecalled with the high-accuracy model. With it off in exact mode, on the affected
+libraries:
 
-- reads kept +82–100%, lowest amplicon about 2.5x
-- reads not spanning one whole product 37–92 → 1–5 per library
-- one library went from 2,256 to 4,107 reads
-- one library recovers the four calls it had lost against v1.2.1, plus one more
-- error rate +0.1–0.3 points
-- no other call changes
+- reads kept roughly doubled, and the lowest-covered amplicon gained the most
+- reads that did not span one whole product fell to a handful per library
+- calls that had been lost against v1.2.1 in a low-yield library came back
+- the error rate rose only marginally, and no other calls changed
 
 Details: `development/test_builds/MARK_FastplongDefaults_Test_20260922`.
 
