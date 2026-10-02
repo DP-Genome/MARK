@@ -68,8 +68,8 @@ PARAM_HELP = {
         "How reads are trimmed, and which reads are kept. Both modes remove the library adapters, and in "
         "both the primer bases are soft-clipped before variant calling.\n\n"
         "standard: adapter sequences from the adapter list are cut wherever they are found, and any read "
-        "long enough afterwards is kept. This is the validated path and the default.\n\n"
-        "exact: exact amplicon trimming. A read is kept only if it carries both primers of one amplicon, "
+        "long enough afterwards is kept. This was the default up to v1.2.5.\n\n"
+        "exact (the default): exact amplicon trimming. A read is kept only if it carries both primers of one amplicon, "
         "with nothing but adapter outside them, and it is cut exactly at those primers. PCR by-products "
         "(primer dimers, read-through and overlap products) are removed. Libraries in which few reads "
         "carry a primer pair are listed in WARNINGS.txt; the run never stops."),
@@ -79,9 +79,10 @@ PARAM_HELP = {
         "(about half of them on low-quality libraries). The primer step already removes everything outside the "
         "primers.\n\n1: turn it back on, as in v1.2.5 and earlier.\n\nIgnored in standard mode, where the "
         "automatic trimming always stays on."),
-    'MAX_LEN': ("Nanopore and Illumina",
-        "Length safeguard, the first step: reads longer than this many bases are removed. The amplicons are "
-        "144-237 bp, so this only removes very long artefacts."),
+    'MAX_LEN': ("Nanopore",
+        "Length safeguard, the first step: nanopore reads longer than this many bases are removed. The amplicons "
+        "are 144-237 bp, so this only removes very long artefacts. Illumina does not use it: its reads are at most "
+        "151 bases, so a maximum can never apply."),
     'DISCARD_WARN_PCT': ("Nanopore and Illumina (not used)",
         "Defined in both pipeline scripts, but no step currently reads it, so changing it has no effect."),
     'QS_MIN': ("Nanopore",
@@ -99,18 +100,26 @@ PARAM_HELP = {
         "reads."),
     'MIN_DEPTH': ("Nanopore and Illumina",
         "Minimum read depth for a variant to be reported. Sites covered by fewer reads are dropped at the "
-        "first variant filter (see SAFETY_QUAL)."),
+        "first variant filter (see SAFETY_QUAL). An amplicon with any position below this depth in the final "
+        "BAM is also listed in WARNINGS.txt, because variants there cannot be called."),
     'MIN_LEN': ("Nanopore and Illumina",
         "Illumina: the shortest merged fragment kept when read pairs are merged. Shorter fragments are "
         "mostly primer dimers and amplicon-overlap products.\n\nNanopore, standard mode: the shortest read "
         "kept after adapter trimming."),
-    'MIN_LEN_POST': ("Nanopore; Illumina in standard mode",
-        "The shortest read kept after trimming. Nanopore: the lower end of the final length window (both "
-        "modes). Illumina, standard mode: reads shorter than this after adapter trimming are dropped. Exact "
-        "mode on Illumina does not use it."),
-    'MAX_LEN_POST': ("Nanopore; Illumina in standard mode",
-        "The longest read kept after trimming. The longest amplicon is 237 bp, so longer reads are "
-        "by-products such as read-through products. Exact mode on Illumina does not use it."),
+    'MIN_LEN_POST': ("Nanopore and Illumina",
+        "The shortest product kept after trimming: the lower end of the final length window, the same on both "
+        "platforms (default 90). In exact mode every product kept is one whole amplicon, 144-237 bp, so the window "
+        "removes nothing there; in standard mode, where reads are cut at adapters, it removes short by-products."),
+    'MAX_LEN_POST': ("Nanopore and Illumina",
+        "The longest product kept after trimming: the upper end of the final length window, the same on both "
+        "platforms (default 300). The longest amplicon is 237 bp, so longer reads are by-products such as "
+        "read-through products."),
+    'MIN_ALIGNED_POST': ("Nanopore and Illumina",
+        "After alignment and primer clipping, every read must still align at least this many template bases. "
+        "A read that aligns fewer, or whose mate did not align at all, is removed together with its mate. "
+        "This catches reads that pass every length filter but hold almost no real sequence, for example an "
+        "Illumina read 2 that turns to poly-G right after its primer. 30 is the default; real reads align 40 or "
+        "more. An amplicon that loses 20% or more of its fragments here is listed in WARNINGS.txt."),
     'EXTRA_TRIM': ("Nanopore; Illumina in standard mode",
         "Extra bases removed from both ends of every read after adapter trimming. 0, the script default, "
         "removes nothing. Exact mode on Illumina does not use it."),
@@ -125,7 +134,7 @@ PARAM_HELP = {
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.2.6 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.2.9 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -152,6 +161,7 @@ class MitoPipelineDashboard:
             'MIN_LEN': '90',
             'MIN_LEN_POST': '90',
             'MAX_LEN_POST': '300',
+            'MIN_ALIGNED_POST': '30',
             'EXTRA_TRIM': '22',
             'READQ': '20',
             'UNQUAL_PCT': '40',
@@ -605,6 +615,39 @@ class MitoPipelineDashboard:
 
     def safe_show_info(self, title, message):
         self.root.after(0, lambda: messagebox.showinfo(title, message))
+
+    def safe_show_warning(self, title, message):
+        self.root.after(0, lambda: messagebox.showwarning(title, message))
+
+    @staticmethod
+    def _run_warnings(folder):
+        """The warnings of a run, one line each, from its WARNINGS.txt (empty list if there is none)."""
+        path = os.path.join(folder or "", "WARNINGS.txt")
+        if not folder or not os.path.isfile(path):
+            return []
+        out = []
+        with open(path) as fh:
+            rows = [l.rstrip("\n").split("\t") for l in fh if l.strip() and not l.startswith("#")]
+        for c in rows[1:]:
+            if len(c) >= 5:
+                where = c[0] if c[2] in ("", "all") else f"{c[0]} {c[2]}"
+                out.append(f"• {where}: {c[1]} ({c[3]}; flag level {c[4]})")
+        return out
+
+    def _finish_message(self, folder, title, done_text):
+        """Final pop-up: a warning listing WARNINGS.txt when the run has any, otherwise the usual message."""
+        warns = self._run_warnings(folder)
+        if not warns:
+            self.safe_show_info(title, done_text)
+            return
+        shown = warns[:12] + ([f"... and {len(warns) - 12} more"] if len(warns) > 12 else [])
+        self.log(f"Run finished WITH {len(warns)} WARNING(S) - see {os.path.join(folder, 'WARNINGS.txt')}")
+        self.update_progress_ui(1, 1, custom_text=f"Finished with {len(warns)} warning(s) - see WARNINGS.txt")
+        where = done_text.split("\n", 1)[1] if "\n" in done_text else f"Folder: {folder}"
+        self.safe_show_warning(f"{title} - finished with {len(warns)} warning(s)",
+                               f"The run finished, with {len(warns)} warning(s). Every library was processed, "
+                               f"but check these before using the results:\n\n" + "\n".join(shown) +
+                               f"\n\nDetails: {os.path.join(folder, 'WARNINGS.txt')}\n{where}")
 
     def safe_show_error(self, title, message):
         self.root.after(0, lambda: messagebox.showerror(title, message))
@@ -1413,7 +1456,7 @@ class MitoPipelineDashboard:
 
         if success:
             self.update_progress_ui(1, 1, custom_text="Pipeline Execution Complete!")
-            self.safe_show_info("Success", f"Pipeline Complete.\nFolder: {wd}")
+            self._finish_message(wd, "Success", f"Pipeline Complete.\nFolder: {wd}")
             self.raw_main_dir.set(wd)
             self.final_main_dir.set(wd)
         elif wd and os.path.exists(wd):
@@ -1593,11 +1636,16 @@ class MitoPipelineDashboard:
         return True
 
     def _run_vcf_correction(self, folder, orig_ref):
+        """Convert each VCF from the linearised reference to the original (rCRS) coordinates: POS through the
+        position map, CHROM and ##contig to the original reference's name and length, ##reference to the
+        original reference, and the records sorted by the new POS."""
         if not folder or not os.path.exists(orig_ref): return False
         self.log("--- STARTING VCF CORRECTION ---")
 
         try:
             pos_map = self.create_position_map(orig_ref, split_pos=8284)
+            rec = next(SeqIO.parse(orig_ref, "fasta"))
+            chrom, chrom_len = rec.id, len(rec.seq)
             files = [f for f in os.listdir(folder) if f.lower().endswith('.vcf') and "corrected" not in f]
             count = 0
 
@@ -1605,23 +1653,28 @@ class MitoPipelineDashboard:
                 if self.stop_requested: return False
                 input_path = os.path.join(folder, f)
                 output_path = os.path.join(folder, f.replace(".vcf", "_corrected.vcf"))
-
-                with open(input_path, "r") as fin, open(output_path, "w") as fout:
+                header, records = [], []
+                with open(input_path, "r") as fin:
                     for line in fin:
-                        if line.startswith("#"):
-                            fout.write(line)
+                        if line.startswith("##contig="):
+                            header.append(f"##contig=<ID={chrom},length={chrom_len}>\n")
+                        elif line.startswith("##reference="):
+                            header.append(f"##reference=file://{os.path.abspath(orig_ref)}\n")
+                        elif line.startswith("#"):
+                            header.append(line)
                         else:
-                            parts = line.strip().split("\t")
+                            parts = line.rstrip("\n").split("\t")
                             if len(parts) > 1 and parts[1].isdigit():
-                                lin_pos = int(parts[1])
-                                orig_pos = pos_map.get(lin_pos, lin_pos)
-                                parts[1] = str(orig_pos)
-                                fout.write("\t".join(parts) + "\n")
-                            else:
-                                fout.write(line)
+                                parts[1] = str(pos_map.get(int(parts[1]), int(parts[1])))
+                                parts[0] = chrom
+                            records.append(parts)
+                records.sort(key=lambda p: int(p[1]) if len(p) > 1 and p[1].isdigit() else 0)
+                with open(output_path, "w") as fout:
+                    fout.writelines(header)
+                    fout.writelines("\t".join(p) + "\n" for p in records)
                 count += 1
 
-            self.log(f"Step 2: VCF positions corrected for {count} files.")
+            self.log(f"Step 2: VCF positions corrected for {count} files (contig {chrom}, sorted by position).")
             return True
         except Exception as e:
             self.log(f"Error during VCF correction: {e}")
@@ -1663,15 +1716,39 @@ class MitoPipelineDashboard:
         self.log(f"Step 3: BAM headers cleaned for {count} files.")
         return True
 
+    FINAL_README = """MARK final results - {run}
+
+The result of this run:
+  corrected_vcfs/   the calls. One pair per library:
+                      <library>_trimmed_clean_corrected.vcf  SNVs called, outside homopolymer and blacklisted sites
+                      <library>_trimmed_snps_corrected.vcf   SNVs called, homopolymer sites included
+                    Positions are rCRS ({chrom}), sorted.
+  cleaned_bams/     the final BAM of each library (<library>_trimmed_sorted_cleaned.bam), primer bases
+                    soft-clipped: the reads the calls were made from. Aligned to the LINEARISED reference:
+                    open them in IGV with reference/{ref_name}.
+  sample_reports/   <library>_final_sample_report.tsv: the calls with heteroplasmy and depth, then review
+                    sections (length variants, homopolymer sites, sites below the call threshold).
+  qc/               <library>_amplicon_depth.tsv (depth per amplicon) and, where made,
+                    <library>_aligned_filter_by_amplicon.tsv (fragments removed after alignment).
+  run_summary.txt   the settings and the reads kept at every step, per library.
+  WARNINGS.txt      {warnings}
+
+For review, not results:
+  review/corrected_vcfs/   every other VCF: calls from the unclipped review BAM (baseline_*), the unfiltered
+                           (raw) and intermediate call sets, homopolymer sites.
+  review/cleaned_bams/     the review ("baseline") BAM: the same reads without primer clipping.
+The alignment intermediates (initial, pe, se BAMs) and the intermediate FASTQs stay in the run folder.
+"""
+
     def _run_final_collection(self, root):
         if not root or not os.path.exists(root): return False
 
         final_dir = os.path.join(root, "Final_Pipeline_Results")
-        final_vcf_dir = os.path.join(final_dir, "corrected_vcfs")
-        final_bam_dir = os.path.join(final_dir, "cleaned_bams")
-
-        os.makedirs(final_vcf_dir, exist_ok=True)
-        os.makedirs(final_bam_dir, exist_ok=True)
+        out = {k: os.path.join(final_dir, *v) for k, v in {
+            "vcf": ("corrected_vcfs",), "bam": ("cleaned_bams",), "reports": ("sample_reports",), "qc": ("qc",),
+            "ref": ("reference",), "review_vcf": ("review", "corrected_vcfs"), "review_bam": ("review", "cleaned_bams")}.items()}
+        for d in out.values():
+            os.makedirs(d, exist_ok=True)
 
         self.log(f"--- FINAL COLLECTION -> {os.path.basename(final_dir)} ---")
 
@@ -1680,18 +1757,56 @@ class MitoPipelineDashboard:
         count = 0
 
         if os.path.exists(src_vcf):
-            for f in os.listdir(src_vcf):
+            for f in sorted(os.listdir(src_vcf)):
                 if self.stop_requested: return False
                 if "corrected" in f and f.endswith(('.vcf', '.vcf.gz')):
-                    self.copy_with_suffix(os.path.join(src_vcf, f), final_vcf_dir)
+                    is_call = f.endswith(("_trimmed_clean_corrected.vcf", "_trimmed_snps_corrected.vcf"))
+                    self.copy_with_suffix(os.path.join(src_vcf, f), out["vcf"] if is_call else out["review_vcf"])
                     count += 1
 
         if os.path.exists(src_bam):
-            for f in os.listdir(src_bam):
+            for f in sorted(os.listdir(src_bam)):
                 if self.stop_requested: return False
                 if "cleaned" in f and f.endswith(('.bam', '.bai', '.bam.bai')):
-                    self.copy_with_suffix(os.path.join(src_bam, f), final_bam_dir)
+                    if "_trimmed_sorted_cleaned." in f:
+                        dest = out["bam"]
+                    elif "_baseline_sorted_cleaned." in f:
+                        dest = out["review_bam"]
+                    else:
+                        continue                  # alignment intermediates stay in sorted_bams/
+                    self.copy_with_suffix(os.path.join(src_bam, f), dest)
                     count += 1
+
+        for name in ("WARNINGS.txt", "run_summary.txt"):
+            if os.path.isfile(os.path.join(root, name)):
+                self.copy_with_suffix(os.path.join(root, name), final_dir)
+                count += 1
+        skip = {"vcfs", "sorted_bams", "Final_Pipeline_Results", "primer_files"}
+        for d in sorted(os.listdir(root)):
+            lib_dir = os.path.join(root, d)
+            if d in skip or not os.path.isdir(lib_dir):
+                continue
+            for f in sorted(os.listdir(lib_dir)):
+                if f.endswith("_final_sample_report.tsv"):
+                    self.copy_with_suffix(os.path.join(lib_dir, f), out["reports"]); count += 1
+                elif f.endswith(("_amplicon_depth.tsv", "_aligned_filter_by_amplicon.tsv")):
+                    self.copy_with_suffix(os.path.join(lib_dir, f), out["qc"]); count += 1
+
+        ref = self.ref_path.get()
+        for p in (ref, ref + ".fai"):
+            if p and os.path.isfile(p) and not os.path.exists(os.path.join(out["ref"], os.path.basename(p))):
+                shutil.copy2(p, out["ref"])
+        chrom = "rCRS"
+        try:
+            chrom = next(SeqIO.parse(self.vcf_orig_ref.get(), "fasta")).id
+        except Exception:
+            pass
+        warns = self._run_warnings(root)
+        with open(os.path.join(final_dir, "README.txt"), "w") as fh:
+            fh.write(self.FINAL_README.format(
+                run=os.path.basename(os.path.normpath(root)), chrom=chrom, ref_name=os.path.basename(ref or "linearized_mtdna.fasta"),
+                warnings=(f"{len(warns)} warning(s) for this run - read this first." if warns
+                          else "not present: this run had no warnings.")))
 
         self.log(f"Step 4: Final results gathered. Copied {count} files.")
         return True
@@ -1765,7 +1880,8 @@ class MitoPipelineDashboard:
             if self.stop_requested: return self._handle_stop()
 
             self.update_progress_ui(4, 4, custom_text="All Processing Complete!")
-            self.safe_show_info("Auto Cycle", "Full Pipeline + Post-Processing Finished Successfully!")
+            self._finish_message(folder, "Auto Cycle", "Full Pipeline + Post-Processing Finished Successfully!\n"
+                                 f"Results: {os.path.join(folder, 'Final_Pipeline_Results')}")
         elif folder:
             self.update_progress_ui(1, 1, custom_text="Auto Cycle Partially Failed.")
             self.safe_show_info("Auto Cycle Failed",

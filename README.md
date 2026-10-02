@@ -213,10 +213,17 @@ MARK_<input>_<timestamp>_output/
 ├── <sample>/                  # per-sample intermediates, QC, logs, and VCFs
 ├── sorted_bams/               # collected baseline/trimmed sorted BAMs
 ├── vcfs/                      # collected raw and filtered VCFs
-├── run_summary.txt            # per-stage read-retention summary
+├── run_summary.txt            # settings, and reads kept at every step, per library
+├── WARNINGS.txt               # only when a library or amplicon was flagged (read this first)
 └── Final_Pipeline_Results/
-    ├── corrected_vcfs/        # VCFs converted back to circular rCRS coordinates
-    └── cleaned_bams/          # header-cleaned BAMs
+    ├── README.txt             # what every folder holds
+    ├── WARNINGS.txt, run_summary.txt
+    ├── corrected_vcfs/        # the calls: <library>_trimmed_clean / _trimmed_snps _corrected.vcf, rCRS coordinates
+    ├── cleaned_bams/          # the final BAM of each library (primer bases soft-clipped)
+    ├── sample_reports/        # <library>_final_sample_report.tsv: calls with heteroplasmy and depth
+    ├── qc/                    # per-amplicon depth; fragments removed after alignment
+    ├── reference/             # the linearised reference the BAMs are aligned to, for IGV
+    └── review/                # every other VCF, and the review ("baseline") BAM
 ```
 
 Exact folder names may vary depending on the run timestamp and selected pipeline.
@@ -243,7 +250,7 @@ An ONT test input fastq has been provided to test the pipeline with 'Test_M.fast
 
 ## Recommended Output for Interpretation
 
-The corrected cleaned VCF files in `Final_Pipeline_Results/corrected_vcfs/` are the main files intended for downstream comparison and review. Intermediate VCFs are retained for transparency and troubleshooting.
+The corrected VCFs in `Final_Pipeline_Results/corrected_vcfs/` (`<library>_trimmed_clean_corrected.vcf`, and `_trimmed_snps_corrected.vcf` with homopolymer sites) are the main files intended for downstream comparison and review. They are in rCRS coordinates (`NC_012920.1`), sorted by position. Check `WARNINGS.txt` first: it lists any library or amplicon whose results need care, for example an amplicon below the calling depth. Intermediate VCFs are retained under `review/` for transparency and troubleshooting.
 
 ---
 
