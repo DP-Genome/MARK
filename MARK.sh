@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.2.6"
+VERSION="1.2.9"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"
@@ -45,6 +45,9 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  FASTPLONG_ADAPTER_TRIM=\"0\" TRIM_MODE=exact only: 1 = let fastplong auto-trim adapters (off by default)"
   echo -e "  MIN_LEN_POST=\"90\"        Minimum read length after trimming"
   echo -e "  MAX_LEN_POST=\"300\"       Maximum read length after trimming"
+  echo -e "  MIN_ALIGNED_POST=\"30\"    Template bases a read must align after primer clipping (else read and mate dropped)"
+  echo -e "  ALIGNED_WARN_PCT=\"20\"    Flag an amplicon in WARNINGS.txt if that check removes this % of its fragments"
+  echo -e "  (MIN_DEPTH also flags an amplicon in WARNINGS.txt when any insert position is below it in the final BAM)"
   echo -e "  EXTRA_TRIM=\"0\"           Extra bases to trim from both ends"
   echo -e "  ref=\"linearized_mtdna.fasta\"     Reference FASTA file (default: the copy beside this script)"
   echo -e "  regions_bed=\"linearized_regions.bed\" Amplicon BED file (default: the copy beside this script)"
@@ -71,6 +74,14 @@ QS_MIN="${QS_MIN:-10}"
 MIN_LEN="${MIN_LEN:-90}"
 MIN_LEN_POST="${MIN_LEN_POST:-90}"
 MAX_LEN_POST="${MAX_LEN_POST:-300}"
+# v1.2.7: after primer clipping, a read needs this many template bases aligned (M/=/X), or it is
+# dropped together with its mate. Catches reads that pass every length filter but align only a
+# few bases, e.g. an Illumina read 2 that turns to poly-G right after its primer (27S3M121S).
+MIN_ALIGNED_POST="${MIN_ALIGNED_POST:-30}"
+# v1.2.8: an amplicon that loses this share of its fragments (%) to that check, and at least
+# ALIGNED_WARN_MIN of them, is flagged in WARNINGS.txt. The library is still processed.
+ALIGNED_WARN_PCT="${ALIGNED_WARN_PCT:-20}"
+ALIGNED_WARN_MIN="${ALIGNED_WARN_MIN:-10}"
 EXTRA_TRIM="${EXTRA_TRIM:-0}"
 CUTADAPT_STALL_SECS="${CUTADAPT_STALL_SECS:-600}"
 CUTADAPT_ERR="${CUTADAPT_ERR:-0.10}" 
@@ -142,6 +153,11 @@ esac
 [[ "$TRIM_MODE" == "standard" || "$TRIM_MODE" == "exact" ]] || { echo "Error: TRIM_MODE must be standard or exact (got '$TRIM_MODE')."; exit 1; }
 PRIMERS_BED="${PRIMERS_BED:-CRM_Nested_primers_empirical.bed}"
 PRIMERS_BED="$(mark_resolve "$PRIMERS_BED")"
+# v1.2.9: the amplicon inserts, for the per-amplicon depth check (flagged in WARNINGS.txt)
+INSERTS_BED="${INSERTS_BED:-CRM_Nested_inserts.bed}"
+INSERTS_BED="$(mark_resolve "$INSERTS_BED")"
+# v1.2.9: the primer-clipping step reads both BEDs, in either mode
+[[ -f "$PRIMERS_BED" && -f "$INSERTS_BED" ]] || { echo "Error: primer BED '$PRIMERS_BED' or inserts BED '$INSERTS_BED' not found."; exit 1; }
 PRIMER_ERR="${PRIMER_ERR:-0.15}"
 # fastplong guesses a library adapter for each file and trims it plus 10 more bases. In exact mode
 # those 10 bases are primer, so the read then fails the primer check: on low-quality libraries this
@@ -259,10 +275,15 @@ PYEOF
 
 # A library whose primer-pair share is below PRIMER_WARN_PCT: never stop, but make it impossible to
 # miss - a banner on screen and in the log, and a line in WARNINGS.txt at the top of the run folder.
-flag_low_primer_share() {    # $1 = library, $2 = pct, $3 = kept, $4 = total, $5 = review file(s)
+# One line per warning in WARNINGS.txt at the top of the run folder (created on the first warning).
+mark_warn() {   # $1 library, $2 check, $3 amplicon, $4 value %, $5 flag level %, $6 count, $7 of, $8 detail
   local w="$run_out/WARNINGS.txt"
-  [[ -f "$w" ]] || printf "# MARK v%s warnings for this run. Libraries listed here were processed, but check them.\nlibrary\tprimer_pair_pct\twarn_below_pct\tkept\tof\treview_reads\n" "$VERSION" > "$w"
-  printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$1" "$2" "$PRIMER_WARN_PCT" "$3" "$4" "$5" >> "$w"
+  [[ -f "$w" ]] || printf "# MARK v%s warnings for this run. Libraries listed here were processed, but check them.\nlibrary\tcheck\tamplicon\tvalue\tflag_level\tcount\tof\tdetail\n" "$VERSION" > "$w"
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$@" >> "$w"
+}
+
+flag_low_primer_share() {    # $1 = library, $2 = pct, $3 = kept, $4 = total, $5 = review file(s)
+  mark_warn "$1" "primer-pair share below flag level" "all" "$2%" "$PRIMER_WARN_PCT%" "$3" "$4" "reads kept; rejected reads for review: $5"
   {
     echo "################################################################################"
     echo "## WARNING: $1 - only $2% of reads carry a primer pair of one amplicon"
@@ -270,6 +291,56 @@ flag_low_primer_share() {    # $1 = library, $2 = pct, $3 = kept, $4 = total, $5
     echo "##          Check the kit and primer BED; rejected reads for review: $5"
     echo "################################################################################"
   } | tee -a "$log_file" >&2
+}
+
+# v1.2.9: an amplicon with any insert position below MIN_DEPTH in the final BAM. Depth is counted as the
+# caller counts it, except that a read with a deletion at a position covers it (samtools depth -J), so a
+# homozygous deletion is not taken for a gap. Unclassified barcode bins are not samples and are skipped.
+flag_low_depth() {   # $1 = library, $2 = final BAM
+  [[ -f "$INSERTS_BED" ]] || return 0
+  local tsv="$sample_out/${1}_amplicon_depth.tsv"
+  samtools depth -a -J -q "$BASEQ_MIN" -Q "$MAPQ_MIN" -b "$INSERTS_BED" "$2" 2>/dev/null | \
+    awk -F'\t' -v bed="$INSERTS_BED" -v floor="$MIN_DEPTH" '
+      BEGIN { OFS = "\t"
+              while ((getline l < bed) > 0) { if (l ~ /^#/ || l == "") continue
+                split(l, f, "\t"); n++; s[n] = f[2]; e[n] = f[3]; a[n] = f[4]; sub(/_insert$/, "", a[n]); mn[n] = -1 } }
+      { for (i = 1; i <= n; i++) if ($2 > s[i] && $2 <= e[i]) {
+          if (mn[i] < 0 || $3 < mn[i]) { mn[i] = $3; at[i] = $2 }
+          tot[i] += $3; c[i]++; if ($3 < floor) lo[i]++ } }
+      END { print "amplicon", "positions", "mean_depth", "min_depth", "min_at_rcrs", "positions_below_min_depth"
+            for (i = 1; i <= n; i++) print a[i], c[i] + 0, (c[i] ? sprintf("%.0f", tot[i] / c[i]) : 0), (mn[i] < 0 ? 0 : mn[i]),
+                                          (at[i] ? (at[i] + 8283) % 16569 + 1 : "-"), lo[i] + 0 }' > "$tsv"
+  [[ "$1" == *unclassified* ]] && return 0
+  awk -F'\t' 'NR > 1 && ($6 > 0 || $2 == 0)' "$tsv" | while IFS=$'\t' read -r amp npos mean mind at below; do
+    [[ "$npos" -eq 0 ]] && { below="all"; mind=0; at="-"; }
+    mark_warn "$1" "amplicon depth below MIN_DEPTH" "$amp" "${mind}x" "${MIN_DEPTH}x" "$below" "$npos" \
+      "insert positions below ${MIN_DEPTH}x in the final BAM, lowest at rCRS $at; see $(basename "$tsv")"
+    {
+      echo "################################################################################"
+      echo "## WARNING: $1 $amp - $below of its $npos insert positions are below ${MIN_DEPTH}x in the final BAM"
+      echo "##          (lowest ${mind}x at rCRS $at). Variants there cannot be called."
+      echo "##          Per-amplicon depth: $(basename "$tsv")"
+      echo "################################################################################"
+    } | tee -a "$log_file" >&2
+  done
+}
+
+# v1.2.8: an amplicon that lost ALIGNED_WARN_PCT % or more of its fragments to the post-alignment check.
+flag_aligned_losses() {   # $1 = library, $2 = per-amplicon table
+  [[ -s "$2" ]] || return 0
+  awk -F'\t' -v p="$ALIGNED_WARN_PCT" -v m="$ALIGNED_WARN_MIN" 'NR>1 && $3+0 >= m+0 && $4+0 >= p+0' "$2" |
+  while IFS=$'\t' read -r amp total removed pct; do
+    mark_warn "$1" "fragments removed after alignment above flag level" "$amp" "$pct%" "$ALIGNED_WARN_PCT%" "$removed" "$total" \
+      "fragments with a read that aligns fewer than $MIN_ALIGNED_POST template bases, or no mate; see $(basename "$2")"
+    {
+      echo "################################################################################"
+      echo "## WARNING: $1 $amp - $removed of $total fragments ($pct%) were removed after alignment:"
+      echo "##          one of their reads aligns fewer than $MIN_ALIGNED_POST template bases, or has no aligned mate"
+      echo "##          (flag level ${ALIGNED_WARN_PCT}%). Coverage of $amp comes from the fragments left."
+      echo "##          Check the review BAM; per-amplicon counts: $(basename "$2")"
+      echo "################################################################################"
+    } | tee -a "$log_file" >&2
+  done
 }
 
 # Nanopore reads still carry the sequencing adapter, so the primer match cannot be anchored.
@@ -522,6 +593,9 @@ run_summary_file="$run_out/run_summary.txt"
   echo "## BASEQ_MIN      : $BASEQ_MIN"
   echo "## PILEUP_DEPTH   : $PILEUP_MAX_DEPTH"
   echo "## PILEUP_IDEPTH  : $PILEUP_MAX_IDEPTH"
+  echo "## MIN_ALIGNED_POST: $MIN_ALIGNED_POST (template bases a read must align after primer clipping; else read and mate removed)"
+  echo "## ALIGNED_WARN   : ${ALIGNED_WARN_PCT}% of an amplicon's fragments removed by that check, at least $ALIGNED_WARN_MIN (flagged in WARNINGS.txt)"
+  echo "## DEPTH_WARN     : an amplicon with any insert position below MIN_DEPTH ($MIN_DEPTH x) in the final BAM (flagged in WARNINGS.txt)"
   echo "##"
   echo "## --- VARIANT FILTERING ---"
   echo "## MIN_DEPTH      : $MIN_DEPTH"
@@ -719,61 +793,44 @@ for fq in "${files[@]}"; do
   echo "[Pipeline] Generating TRIMMED track..." | tee -a "$log_file"
   bam_trimmed="$sample_out/${base}_trimmed_sorted.bam"
 
+  export MIN_ALIGNED_POST MARK_ALIGNED_STATS="$sample_out/${base}_aligned_filter.tsv" MARK_ALIGNED_AMPS="$sample_out/${base}_aligned_filter_by_amplicon.tsv" MARK_PRIMERS_BED="$PRIMERS_BED" MARK_INSERTS_BED="$INSERTS_BED"
   samtools view -h "$bam_initial" | python3 -c '
 import os, sys, re
 
-# Perfectly tiled boundary protection
-amplicons = [
-    ("Amp1", 7729, 7842),
-    ("Amp2", 7832, 7941),
-    ("Amp3", 7939, 8124),
-    ("Amp4", 8103, 8202),
-    ("Amp5", 8190, 8315),
-    ("Amp6", 8271, 8437),
-    ("Amp7", 8421, 8542),
-    ("Amp8", 8531, 8649),
-    ("Amp9", 8627, 8721),
-    ("Amp10", 8714, 8877)
-]
-
-# Callable insert per amplicon: the product minus its own primer footprints.
-# These are the ten inserts published for the PowerSeq CRM Nested System
-# (Vinueza-Espinosa et al. 2023, Electrophoresis 44:1423-1434). Unlike the midpoint
-# tiles they replace, adjacent inserts overlap - a base covered by two amplicons is
-# sequenced by two independent molecules, so both are counted. Each fragment is
-# still counted once. Assignment stays on these same spans; assigning on the full
-# product span instead lets a neighbour with a long primer arm capture reads it
-# then clips away, losing real coverage.
-tiled_bounds = {
-    "Amp1":  (7729, 7842),
-    "Amp2":  (7832, 7941),
-    "Amp3":  (7939, 8124),
-    "Amp4":  (8103, 8202),
-    "Amp5":  (8190, 8315),
-    "Amp6":  (8271, 8437),
-    "Amp7":  (8421, 8542),
-    "Amp8":  (8531, 8649),
-    "Amp9":  (8627, 8721),
-    "Amp10": (8714, 8877)
-}
-
-# Product spans and their primer footprints. Promega does not publish the primers,
-# so these come from the fixed read termini seen when sequencing this kit
-# (see CRM_Nested_primers_empirical.bed).
-#   name, product_start, product_end, forward_primer_end, reverse_primer_start  (1-based)
-products = [
-    ("Amp1",  7702, 7868, 7728, 7843),
-    ("Amp2",  7810, 7964, 7831, 7942),
-    ("Amp3",  7913, 8149, 7938, 8125),
-    ("Amp4",  8079, 8225, 8102, 8203),
-    ("Amp5",  8166, 8337, 8189, 8316),
-    ("Amp6",  8258, 8465, 8270, 8438),
-    ("Amp7",  8394, 8578, 8420, 8543),
-    ("Amp8",  8503, 8674, 8530, 8650),
-    ("Amp9",  8608, 8745, 8626, 8722),
-    ("Amp10", 8687, 8904, 8713, 8878),
-]
+# v1.2.9: the coordinates are read from the BED files, the single source for every primer-dependent step.
+# (They were a hard-coded table whose Amp6 and Amp9 product starts were 9 and 6 bases late.)
+#   amplicons, tiled_bounds: the callable inserts (CRM_Nested_inserts.bed), 1-based inclusive. Reads are
+#     assigned on these spans: assigning on the full product span lets a neighbour with a long primer arm
+#     capture reads it then clips away. Adjacent inserts overlap as published for the kit (Vinueza-Espinosa
+#     et al. 2023): a base covered by two amplicons is read by two molecules, and both count.
+#   products: name, product_start, product_end, forward_primer_end, reverse_primer_start (1-based), from the
+#     primer footprints (CRM_Nested_primers_empirical.bed), the fixed read termini seen with this kit.
+def read_bed(path):
+    rows = {}
+    for line in open(path):
+        if line.startswith("#") or not line.strip():
+            continue
+        f = line.rstrip("\r\n").split("\t")
+        rows[f[3]] = (int(f[1]), int(f[2]))            # 0-based, half-open
+    return rows
+PB = read_bed(os.environ["MARK_PRIMERS_BED"])
+IB = read_bed(os.environ["MARK_INSERTS_BED"])
+NAMES = sorted({k.rsplit("_", 1)[0] for k in PB}, key=lambda n: PB[n + "_FWD"][0])
+amplicons = [(n, IB[n + "_insert"][0] + 1, IB[n + "_insert"][1]) for n in NAMES]
+tiled_bounds = {n: (s, e) for n, s, e in amplicons}
+products = [(n, PB[n + "_FWD"][0] + 1, PB[n + "_REV"][1], PB[n + "_FWD"][1], PB[n + "_REV"][0] + 1) for n in NAMES]
 PRIMER_TOL = 10
+import collections
+MIN_ALN = int(os.environ.get("MIN_ALIGNED_POST", "30"))
+STATS = os.environ.get("MARK_ALIGNED_STATS", "")
+AMPS = os.environ.get("MARK_ALIGNED_AMPS", "")
+OUT, bad, famp = [], {}, {}      # famp: fragment -> amplicon, for the per-amplicon counts
+def mark(name, flag, reason):
+    # v1.2.9: only a primary alignment can remove a read. A supplementary piece (part of a split
+    # alignment, e.g. a read with a large deletion) that fails is dropped on its own; the read stays.
+    if not flag & 2048:
+        bad.setdefault(name, reason)
+amp_tag = re.compile(r"_(Amp\d+)")
 
 
 cigar_re = re.compile(r"(\d+)([MIDNSHPX=])")
@@ -787,13 +844,16 @@ for line in sys.stdin:
     line = line.rstrip("\n")
     parts = line.split("\t")
     if len(parts) < 11: 
-        sys.stdout.write(line + "\n")
+        OUT.append((line.split("\t", 1)[0], line + "\n"))
         continue
 
     flag = int(parts[1])
+    # v1.2.8: one read of a pair aligned and the other did not at all - drop both
+    if flag & 1 and bool(flag & 4) != bool(flag & 8):
+        bad.setdefault(parts[0], "its mate did not align")
     # Skip unmapped and secondary alignments to prevent leaks
     if flag & 4 or flag & 256:
-        sys.stdout.write(line + "\n")
+        OUT.append((line.split("\t", 1)[0], line + "\n"))
         continue
 
     pos = int(parts[3]) - 1 # 0-based
@@ -802,11 +862,14 @@ for line in sys.stdin:
     qual = parts[10]
     
     if cigar == "*" or qual == "*" or seq == "*":
-        sys.stdout.write(line + "\n")
+        OUT.append((line.split("\t", 1)[0], line + "\n"))
         continue
 
     ref_span = sum(int(n) for n, op in cigar_re.findall(cigar) if op in "MDN=X")
     ref_end = pos + ref_span
+    if not flag & 2048 and parts[0] not in famp:
+        m = amp_tag.search(parts[0])
+        famp[parts[0]] = m.group(1) if m else max(amplicons, key=lambda a: min(ref_end, a[2]) - max(pos, a[1]))[0]
     
     # --- PRIMER-FOOTPRINT TRIMMING ---
     # A read is no longer assigned to one amplicon and cut to that amplicon bounds.
@@ -855,6 +918,7 @@ for line in sys.stdin:
                 max_overlap = overlap
                 best_amp = name
         if best_amp is None or max_overlap <= 0:
+            mark(parts[0], flag, "no template base left inside an amplicon insert")
             continue
         t_start, t_end = tiled_bounds[best_amp]
         keep_start = t_start - 1
@@ -863,9 +927,11 @@ for line in sys.stdin:
     # off-target guard: the read must still touch at least one amplicon insert
     if not any(min(keep_end, a_end) - max(keep_start, a_start) > 0
                for _, a_start, a_end in amplicons):
+        mark(parts[0], flag, "no template base left inside an amplicon insert")
         continue
 
     if ref_end <= keep_start or pos >= keep_end:
+        mark(parts[0], flag, "no template base left inside an amplicon insert")
         continue # Entire read is outside the target amplicon
 
     ref_p = pos
@@ -915,6 +981,7 @@ for line in sys.stdin:
         kept_cigar.pop()
 
     if not kept_cigar:
+        mark(parts[0], flag, "no template base left inside an amplicon insert")
         continue
 
     # Condense adjacent identical operations
@@ -937,13 +1004,45 @@ for line in sys.stdin:
     parts[3] = str(new_pos + 1)
     parts[5] = final_cigar
 
-    try:
-        sys.stdout.write("\t".join(parts) + "\n")
-    except BrokenPipeError:
-        sys.exit(0)
+    aligned = sum(int(n) for n, op in cigar_re.findall(final_cigar) if op in "M=X")
+    if aligned < MIN_ALN:
+        if flag & 2048:
+            continue                      # a short supplementary piece: drop the piece, keep the read
+        bad.setdefault(parts[0], "fewer than %d template bases aligned" % MIN_ALN)
+    OUT.append((parts[0], "\t".join(parts) + "\n"))
+
+# v1.2.7: write everything except reads (and their mates) that failed, then record why
+dropped = collections.Counter()
+try:
+    for q, l in OUT:
+        if q in bad:
+            dropped[bad[q]] += 1
+            continue
+        sys.stdout.write(l)
+except BrokenPipeError:
+    sys.exit(0)
+if STATS:
+    frags = collections.Counter(bad.values())
+    with open(STATS, "w") as fh:
+        fh.write("reason\tfragments\talignments\n")
+        for k in sorted(set(frags) | set(dropped)):
+            fh.write("%s\t%d\t%d\n" % (k, frags.get(k, 0), dropped.get(k, 0)))
+if AMPS:
+    tot = collections.Counter(famp.values())
+    rem = collections.Counter(famp[q] for q in bad if q in famp)
+    with open(AMPS, "w") as fh:
+        fh.write("amplicon\tfragments\tremoved\tremoved_pct\n")
+        for name, _, _ in amplicons:
+            if tot[name]:
+                fh.write("%s\t%d\t%d\t%.1f\n" % (name, tot[name], rem[name], rem[name] * 100.0 / tot[name]))
 ' | samtools view -Sb - | samtools sort -@ "$threads" -o "$bam_trimmed"
 
   run_log samtools index "$bam_trimmed"
+  aln_drop=$(awk -F'\t' 'NR>1{s+=$2} END{print s+0}' "$MARK_ALIGNED_STATS" 2>/dev/null || echo 0)
+  printf "%s\t6_MinAlignedPost(fragments)\t-\t-\t%s\t-\n" "$base" "${aln_drop:-0}" >> "$run_summary_file"
+  echo "[Filter] $aln_drop fragments dropped after primer clipping (fewer than $MIN_ALIGNED_POST template bases aligned, none left in an insert, or mate not aligned); see $(basename "$MARK_ALIGNED_STATS")" | tee -a "$log_file"
+  flag_aligned_losses "$base" "$MARK_ALIGNED_AMPS"
+  flag_low_depth "$base" "$bam_trimmed"
 
   # Trimmed Variant Calling
   vcf_raw_trimmed="$sample_out/${base}_trimmed_raw.vcf"
@@ -969,13 +1068,16 @@ echo "[Processing] Extracting heteroplasmy summary for $base..." | tee -a "$log_
 het_output="$sample_out/${base}_final_sample_report.tsv"
 
 python3 -c '
-import sys
-import os
-import glob
+import sys, os
 
-sample_dir = sys.argv[1]
-base_name = sys.argv[2]
-het_output = os.path.join(sample_dir, f"{base_name}_final_sample_report.tsv")
+# v1.2.8: the sample report is built from the VCFs of the final (primer-clipped) BAM only. The review
+# ("baseline") VCFs and the unfiltered *_raw.vcf are not read: they carry primer bases and sites below
+# the depth and quality floors, which are not calls.
+#   calls                 <base>_trimmed_clean.vcf (SNVs, QUAL > STRICT_QUAL, outside homopolymer and blacklisted sites)
+#   review sections       every other record of <base>_trimmed_annotated_all.vcf (QUAL > SAFETY_QUAL, depth >= MIN_DEPTH)
+sample_dir, base_name, version, strict_q, safety_q, min_depth = sys.argv[1:7]
+het_output = os.path.join(sample_dir, base_name + "_final_sample_report.tsv")
+
 
 def get_region(pos):
     if 16024 <= pos <= 16365:
@@ -989,94 +1091,69 @@ def get_region(pos):
     else:
         return "Coding Region", "Whole Genome"
 
-main_keywords = ["snps", "clean", "annotated_all", "indels", "qual_filtered"]
-
-main_variants = {}
-other_variants = {}
-
-vcf_files = glob.glob(os.path.join(sample_dir, "*.vcf"))
 
 def parse_vcf(vcf_path):
     variants = {}
-    with open(vcf_path, "r") as f:
+    if not os.path.exists(vcf_path):
+        return variants
+    with open(vcf_path) as f:
         for line in f:
             if line.startswith("#"):
                 continue
-            parts = line.strip().split("\t")
+            parts = line.rstrip("\n").split("\t")
             if len(parts) < 10:
                 continue
-            
-            chrom = parts[0]
-            lin_pos = int(parts[1])
-            ref = parts[3]
-            alt = parts[4]
             fmt = parts[8].split(":")
             sample_data = parts[9].split(":")
-            
             try:
-                ad_idx = fmt.index("AD")
-                dp_idx = fmt.index("DP")
-                
-                ad_field = sample_data[ad_idx]
-                tot_dp = int(sample_data[dp_idx]) if sample_data[dp_idx] != "." else 0
-                
-                if tot_dp == 0:
-                    continue
-                    
-                ad_parts = ad_field.split(",")
-                ref_dp = int(ad_parts[0]) if ad_parts[0] != "." else 0
-                alt_dp = int(ad_parts[1]) if len(ad_parts) > 1 and ad_parts[1] != "." else 0
-                
-                vaf = (alt_dp / tot_dp) * 100.0 if tot_dp > 0 else 0.0
-                
-                if 1.0 <= vaf <= 100.0:
-                    variant_key = f"{chrom}_{lin_pos}_{ref}_{alt}"
-                    variants[variant_key] = {
-                        "chrom": chrom,
-                        "lin_pos": lin_pos,
-                        "ref": ref,
-                        "alt": alt,
-                        "vaf": vaf
-                    }
-            except (ValueError, IndexError, ZeroDivisionError):
+                tot_dp = int(sample_data[fmt.index("DP")]) if sample_data[fmt.index("DP")] != "." else 0
+                ad_parts = sample_data[fmt.index("AD")].split(",")
+            except (ValueError, IndexError):
                 continue
+            if tot_dp == 0:
+                continue
+            alt_dp = int(ad_parts[1]) if len(ad_parts) > 1 and ad_parts[1] != "." else 0
+            vaf = alt_dp * 100.0 / tot_dp
+            if not 1.0 <= vaf <= 100.0:
+                continue
+            info = dict(kv.split("=", 1) for kv in parts[7].split(";") if "=" in kv)
+            key = (int(parts[1]), parts[3], parts[4])
+            variants[key] = {"lin_pos": int(parts[1]), "ref": parts[3], "alt": parts[4], "vaf": vaf, "dp": tot_dp,
+                             "qual": float(parts[5]) if parts[5] != "." else 0.0,
+                             "region_type": info.get("RegionType", "")}
     return variants
 
-for vcf_file in vcf_files:
-    fname = os.path.basename(vcf_file).lower()
-    is_main = any(kw in fname for kw in main_keywords)
-    
-    parsed_vars = parse_vcf(vcf_file)
-    for k, v in parsed_vars.items():
-        if is_main:
-            main_variants[k] = v
-        else:
-            other_variants[k] = v
 
-# Remove duplicates from other_variants that are already in main_variants
-for k in main_variants:
-    if k in other_variants:
-        del other_variants[k]
+calls = parse_vcf(os.path.join(sample_dir, base_name + "_trimmed_clean.vcf"))
+everything = parse_vcf(os.path.join(sample_dir, base_name + "_trimmed_annotated_all.vcf"))
+length_hp, below = {}, {}
+for k, v in everything.items():
+    if k in calls:
+        continue
+    snv = len(v["ref"]) == 1 and len(v["alt"]) == 1
+    if not snv:
+        v["why"] = "length variant; indels are not called"
+        length_hp[k] = v
+    elif v["region_type"] == "HP_Region":
+        v["why"] = "homopolymer region; not called"
+        length_hp[k] = v
+    elif v["region_type"] == "Blacklist_Site":
+        v["why"] = "blacklisted site; not called"
+        below[k] = v
+    else:
+        v["why"] = "QUAL %.0f, calls need > %s" % (v["qual"], strict_q)
+        below[k] = v
+
+HEADER = ("Region / Locus\tRange Covered\trCRS Reference Nucleotide\tVariant Called\tHeteroplasmy % (VAF)\t"
+          "Notes / HGVS Equivalent\tRead Depth\n")
 
 with open(het_output, "w") as out:
     def write_variants(var_dict):
-        sorted_vars = sorted(var_dict.values(), key=lambda x: x["lin_pos"])
-        for v in sorted_vars:
-            lin_pos = v["lin_pos"]
-            ref = v["ref"]
-            alt = v["alt"]
-            vaf = v["vaf"]
-            
+        for v in sorted(var_dict.values(), key=lambda x: (x["lin_pos"] + 8284) % 16569 or 16569):
+            lin_pos, ref, alt, vaf = v["lin_pos"], v["ref"], v["alt"], v["vaf"]
             real_pos = (lin_pos + 8284) % 16569
             if real_pos == 0: real_pos = 16569
-            
             region_name, range_cov = get_region(real_pos)
-            
-            disp_ref = ref
-            variant_called = ""
-            notes = ""
-            het_status = ""
-            
             if len(ref) == 1 and len(alt) == 1:
                 disp_ref = ref
                 variant_called = f"m.{real_pos}{alt}"
@@ -1089,28 +1166,34 @@ with open(het_output, "w") as out:
                 if len(del_seq) == 1:
                     variant_called = f"m.{del_start}del"
                 else:
-                    del_end = del_start + len(del_seq) - 1
-                    variant_called = f"m.{del_start}_{del_end}del"
+                    variant_called = f"m.{del_start}_{del_start + len(del_seq) - 1}del"
                 notes = "Deletion"
                 het_status = f"Homoplasmic {vaf:.0f}%" if vaf > 95.0 else f"{vaf:.0f}% LHP"
             else:
                 disp_ref = "-"
-                ins_seq = alt[len(ref):]
-                variant_called = f"m.{real_pos}.1{ins_seq}"
+                variant_called = f"m.{real_pos}.1{alt[len(ref):]}"
                 notes = "Insertion"
                 het_status = f"Homoplasmic {vaf:.0f}%" if vaf > 95.0 else f"{vaf:.0f}% LHP"
-                
-            out.write(f"{region_name}\t{range_cov}\t{disp_ref}\t{variant_called}\t{het_status}\t{notes}\n")
+            if "why" in v:
+                notes = notes + "; " + v["why"]
+            depth = v["dp"]
+            out.write(f"{region_name}\t{range_cov}\t{disp_ref}\t{variant_called}\t{het_status}\t{notes}\t{depth}\n")
 
-    out.write("### MAIN RESULTS ###\n")
-    out.write("Region / Locus\tRange Covered\trCRS Reference Nucleotide\tVariant Called\tHeteroplasmy % (VAF)\tNotes / HGVS Equivalent\n")
-    write_variants(main_variants)
-    
-    out.write("\n### OTHER OBSERVATIONS ###\n")
-    out.write("Region / Locus\tRange Covered\trCRS Reference Nucleotide\tVariant Called\tHeteroplasmy % (VAF)\tNotes / HGVS Equivalent\n")
-    write_variants(other_variants)
-
-' "$sample_out" "$base"
+    out.write(f"# MARK v{version} sample report: {base_name}\n")
+    out.write(f"# From the final (primer-clipped) BAM only. Calls = {base_name}_trimmed_clean.vcf: SNVs with QUAL > {strict_q} "
+              f"and depth >= {min_depth}, outside homopolymer and blacklisted sites. The review sections list the other "
+              f"sites with QUAL > {safety_q} ({base_name}_trimmed_annotated_all.vcf); they are not calls. "
+              f"Heteroplasmy % = reads with the variant / read depth.\n")
+    out.write("### MAIN RESULTS (the calls) ###\n")
+    out.write(HEADER)
+    write_variants(calls)
+    out.write("\n### LENGTH VARIANTS AND HOMOPOLYMER SITES (for review, not calls) ###\n")
+    out.write(HEADER)
+    write_variants(length_hp)
+    out.write("\n### BELOW THE CALL THRESHOLD OR AT A BLACKLISTED SITE (for review, not calls) ###\n")
+    out.write(HEADER)
+    write_variants(below)
+' "$sample_out" "$base" "$VERSION" "$STRICT_QUAL" "$SAFETY_QUAL" "$MIN_DEPTH"
 
     rm -f "$sample_bed" "$sample_out/hdr.txt"
   fi
@@ -1136,7 +1219,7 @@ if [[ -f "$run_out/WARNINGS.txt" ]]; then
   {
     echo "################################################################################"
     echo "## THIS RUN HAS WARNINGS - see $run_out/WARNINGS.txt"
-    awk -F'\t' 'NR>2 { printf "##   %s: %s%% of reads carry a primer pair\n", $1, $2 }' "$run_out/WARNINGS.txt"
+    awk -F'\t' 'NR>2 { printf "##   %s %s: %s (%s, flag level %s)\n", $1, ($3 == "all" ? "" : $3), $2, $4, $5 }' "$run_out/WARNINGS.txt"
     echo "################################################################################"
   } >&2
 fi

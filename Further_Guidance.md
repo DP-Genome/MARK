@@ -78,7 +78,7 @@ The output base directory is the directory the run folder is created in, and is 
 
 Leaving both fields empty gives the default: the run folder is created **beside the input**, as a sibling, named `<PIPELINE>_<input>_<timestamp>_output`. It is never created inside the input folder, and never in whatever directory the script happened to be launched from. Both `OUTPUT_DIR` and `RUN_NAME` work the same way when calling `MARK.sh` / `MARK-I.sh` directly from a terminal.
 
-The parameter grid includes values such as `MAX_LEN`, `QS_MIN`, `STRICT_QUAL`, `MIN_DEPTH`, `MIN_LEN`, `MIN_LEN_POST`, `MAX_LEN_POST`, `EXTRA_TRIM`, `READQ`, and `UNQUAL_PCT`. The dashboard only passes overrides for variables whose checkbox is enabled.
+The parameter grid includes values such as `TRIM_MODE`, `MAX_LEN` (nanopore only), `QS_MIN`, `STRICT_QUAL`, `MIN_DEPTH`, `MIN_LEN`, `MIN_LEN_POST`, `MAX_LEN_POST`, `MIN_ALIGNED_POST`, `EXTRA_TRIM`, `READQ`, and `UNQUAL_PCT`. The dashboard only passes overrides for variables whose checkbox is enabled.
 
 #### Post-processing tab
 
@@ -88,13 +88,14 @@ The post-processing tab is broken into four steps:
    - recursively copies VCFs into a `vcfs/` folder and sorted BAMs into a `sorted_bams/` folder inside the run directory.
 
 2. **Linear VCF Correction**
-   - converts linearized variant positions back to original circular mtDNA coordinates using a position map built from the original reference. Output files are named with `_corrected.vcf`.
+   - converts linearized variant positions back to original circular mtDNA coordinates using a position map built from the original reference, sets the contig to the original reference's name (`NC_012920.1`) and sorts the records by position, so the file can be compressed and indexed. Output files are named with `_corrected.vcf`.
 
 3. **BAM Header Cleaning**
    - uses `samtools view -H`, `sed`, and `samtools reheader` to produce `_cleaned.bam` files and new BAM indexes. This is intended to improve downstream compatibility, especially for viewing or reusing the BAMs.
 
 4. **Final Collection**
-   - gathers corrected VCFs and cleaned BAMs into a single `Final_Pipeline_Results/` directory with `corrected_vcfs/` and `cleaned_bams/` subfolders.
+   - gathers the results into a single `Final_Pipeline_Results/` directory: `corrected_vcfs/` (the calls), `cleaned_bams/` (the final BAMs), `sample_reports/`, `qc/`, `reference/` (the linearised reference, to view the BAMs) and `review/` (every other VCF and the review BAM), plus `WARNINGS.txt`, `run_summary.txt` and a `README.txt` describing each folder.
+   - When the run has warnings, the dashboard then ends with a pop-up listing them, instead of the usual success message.
 
 ### How to use it
 
@@ -349,7 +350,7 @@ Use this tool when you want to understand:
 A practical use case for the full set of tools would look like this:
 
 1. Run `MARK.sh` or `MARK-I.sh` through `MARKLaunch.py`.
-2. Let the dashboard auto-run post-processing so you end up with corrected VCFs and cleaned BAMs in `Final_Pipeline_Results/`.
+2. Let the dashboard auto-run post-processing so you end up with corrected VCFs, cleaned BAMs, sample reports and the run's warnings in `Final_Pipeline_Results/`.
 3. Use `VCF_OrganizerApp.py` to group corrected trimmed-track VCFs by biological sample such as `SampleA`, `SampleB`, or other sample identities.
 4. Use `vcf_compare_guiv3.py` to compare triplicates or cross-platform callsets and identify consensus, discordant, and singleton variants.
 5. If a sample behaves abnormally, run `SequenceAnalyzerApp_v3.py` on the pipeline output folder to see whether the issue already appears in the read-length, quality, or mapping progression.
