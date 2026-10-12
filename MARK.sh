@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.2.9"
+VERSION="1.2.10"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"
@@ -96,7 +96,10 @@ regions_bed="$(mark_resolve "$regions_bed")"
 SAFETY_QUAL="${SAFETY_QUAL:-20}"
 STRICT_QUAL="${STRICT_QUAL:-60}"
 MIN_DEPTH="${MIN_DEPTH:-10}"       
-PILEUP_MAX_DEPTH="${PILEUP_MAX_DEPTH:-100000}"
+# v1.2.10: no limit by default (0 = no limit; was 100,000). A pileup that reaches a limit skips reads and
+# drops real calls (see flag_pileup_cap). bcftools gets its own maximum for 0, never 0 itself.
+PILEUP_MAX_DEPTH="${PILEUP_MAX_DEPTH:-0}"
+BCF_MAX_DEPTH="$PILEUP_MAX_DEPTH"; [[ "$BCF_MAX_DEPTH" -le 0 ]] && BCF_MAX_DEPTH=2147483647
 # bcftools keeps a SEPARATE depth cap for indel candidates (--max-idepth,
 # default 250). Raising -d alone leaves it at 250, which silently stops indel
 # candidate generation above 250x - i.e. everywhere in this panel. Tie it to
@@ -104,7 +107,7 @@ PILEUP_MAX_DEPTH="${PILEUP_MAX_DEPTH:-100000}"
 # The snps/clean outputs stay SNP-only (they filter on TYPE="snp"); this only
 # restores indels to the annotated_all / qual_filtered review VCFs, which is
 # where they are meant to appear.
-PILEUP_MAX_IDEPTH="${PILEUP_MAX_IDEPTH:-$PILEUP_MAX_DEPTH}"
+PILEUP_MAX_IDEPTH="${PILEUP_MAX_IDEPTH:-$BCF_MAX_DEPTH}"; [[ "$PILEUP_MAX_IDEPTH" -le 0 ]] && PILEUP_MAX_IDEPTH=2147483647
 BASEQ_MIN="${BASEQ_MIN:-20}"       
 MAPQ_MIN="${MAPQ_MIN:-20}"
 EDGE_PROTECT="${EDGE_PROTECT:-1}"
@@ -323,6 +326,28 @@ flag_low_depth() {   # $1 = library, $2 = final BAM
       echo "################################################################################"
     } | tee -a "$log_file" >&2
   done
+}
+
+# v1.2.10: bcftools mpileup reads at most PILEUP_MAX_DEPTH reads per position. When a whole-BAM pileup
+# reaches it, bcftools skips reads and later positions can be left almost empty, so real calls are lost.
+# The highest depth in the final BAM (deletions counted, no quality filter, as bcftools counts reads) must stay
+# below it; otherwise the library is flagged and PILEUP_MAX_DEPTH must be raised.
+flag_pileup_cap() {   # $1 = library, $2 = final BAM
+  local maxd
+  maxd=$(samtools depth -J "$2" 2>/dev/null | awk 'BEGIN { m = 0 } $3 > m { m = $3; p = $2 } END { printf "%d\t%s", m, (p ? (p + 8283) % 16569 + 1 : "-") }')
+  local mdepth="${maxd%%$'\t'*}" mat="${maxd##*$'\t'}"
+  echo "[Depth] highest read depth in the final BAM: ${mdepth}x at rCRS $mat (PILEUP_MAX_DEPTH ${PILEUP_MAX_DEPTH}; 0 = no limit)" | tee -a "$log_file"
+  if [[ "$PILEUP_MAX_DEPTH" -gt 0 && "${mdepth:-0}" -ge "$PILEUP_MAX_DEPTH" ]]; then
+    mark_warn "$1" "depth at or above PILEUP_MAX_DEPTH" "all" "${mdepth}x" "${PILEUP_MAX_DEPTH}x" "-" "-" \
+      "bcftools skips reads beyond PILEUP_MAX_DEPTH, so calls may be missing; rerun with PILEUP_MAX_DEPTH above ${mdepth}"
+    {
+      echo "################################################################################"
+      echo "## WARNING: $1 - read depth reaches ${mdepth}x (rCRS $mat), at or above PILEUP_MAX_DEPTH (${PILEUP_MAX_DEPTH})."
+      echo "##          bcftools skips reads beyond it, so variant calls may be MISSING."
+      echo "##          Rerun with PILEUP_MAX_DEPTH set above ${mdepth}."
+      echo "################################################################################"
+    } | tee -a "$log_file" >&2
+  fi
 }
 
 # v1.2.8: an amplicon that lost ALIGNED_WARN_PCT % or more of its fragments to the post-alignment check.
@@ -769,7 +794,7 @@ for fq in "${files[@]}"; do
   # Baseline Variant Calling
   vcf_raw_base="$sample_out/${base}_baseline_raw.vcf"
   vcf_qual_base="$sample_out/${base}_baseline_qual_filtered.vcf"
-  run_log bash -c "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $PILEUP_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_baseline' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_base'; }"
+  run_log bash -c "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $BCF_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_baseline' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_base'; }"
   run_log bcftools filter -i "QUAL>$SAFETY_QUAL && INFO/DP>=$MIN_DEPTH" -Ov -o "$vcf_qual_base" "$vcf_raw_base"
 
   # Baseline Annotation
@@ -1043,11 +1068,12 @@ if AMPS:
   echo "[Filter] $aln_drop fragments dropped after primer clipping (fewer than $MIN_ALIGNED_POST template bases aligned, none left in an insert, or mate not aligned); see $(basename "$MARK_ALIGNED_STATS")" | tee -a "$log_file"
   flag_aligned_losses "$base" "$MARK_ALIGNED_AMPS"
   flag_low_depth "$base" "$bam_trimmed"
+  flag_pileup_cap "$base" "$bam_trimmed"
 
   # Trimmed Variant Calling
   vcf_raw_trimmed="$sample_out/${base}_trimmed_raw.vcf"
   vcf_qual_trimmed="$sample_out/${base}_trimmed_qual_filtered.vcf"
-  run_log bash -c "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $PILEUP_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_trimmed' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_trimmed'; }"
+  run_log bash -c "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $BCF_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_trimmed' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_trimmed'; }"
   run_log bcftools filter -i "QUAL>$SAFETY_QUAL && INFO/DP>=$MIN_DEPTH" -Ov -o "$vcf_qual_trimmed" "$vcf_raw_trimmed"
 
   # Trimmed Annotation
