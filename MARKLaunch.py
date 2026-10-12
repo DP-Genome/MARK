@@ -96,8 +96,9 @@ PARAM_HELP = {
         "snps and clean VCFs. Raising it gives fewer, more certain calls."),
     'PILEUP_MAX_DEPTH': ("Nanopore and Illumina",
         "The most reads bcftools looks at in one position when calling variants; beyond that it uses a "
-        "subset. Keep it above your highest coverage, or allele fractions are estimated from a sample of the "
-        "reads."),
+        "subset, and in a whole-genome pileup later positions can be left with almost no reads, so real calls "
+        "are lost. 0 (the default) means no limit. If you set a limit and any position in the final BAM "
+        "reaches it, the library is listed in WARNINGS.txt."),
     'MIN_DEPTH': ("Nanopore and Illumina",
         "Minimum read depth for a variant to be reported. Sites covered by fewer reads are dropped at the "
         "first variant filter (see SAFETY_QUAL). An amplicon with any position below this depth in the final "
@@ -134,7 +135,7 @@ PARAM_HELP = {
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.2.9 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.2.10 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -156,7 +157,7 @@ class MitoPipelineDashboard:
             'QS_MIN': '10',
             'SAFETY_QUAL': '20',
             'STRICT_QUAL': '60',
-            'PILEUP_MAX_DEPTH': '1000000',
+            'PILEUP_MAX_DEPTH': '0',                # v1.2.10: 0 = no limit
             'MIN_DEPTH': '15',
             'MIN_LEN': '90',
             'MIN_LEN_POST': '90',
