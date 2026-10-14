@@ -62,8 +62,13 @@ Both pipelines map reads to a **linearized mitochondrial reference** and split t
 MARK can be installed through Conda when the package is available, or run directly from the GitHub source.
 
 **Tested Installation:**
+
+Since v1.4 MARK calls variants with **freebayes**. Its bioconda builds cannot share an environment with the validated tool versions on Linux and Apple Silicon (they need older htslib and libdeflate), so it is installed in a second, small environment named `mark_fb`. MARK uses `freebayes` from your `PATH` if it is there, otherwise it finds the `mark_fb` environment by itself; you can also point to any copy with `FREEBAYES=/path/to/freebayes`.
+
 ```bash
 conda create -n mark_env -c conda-forge -c bioconda python=3.10 biopython "fastp>=1.3.7" "fastplong>=0.7.1" "minimap2>=2.31" "bwa-mem2>=2.3" "bcftools>=1.24" "cutadapt>=5.2" "fastqc>=0.12.1" "samtools>=1.24" -y
+# freebayes (the variant caller since v1.4) goes in its own environment; MARK finds it there by itself
+conda create -n mark_fb -c conda-forge -c bioconda freebayes=1.3.10 -y
 conda activate mark_env
 git clone https://github.com/DP-Genome/MARK.git
 cd MARK
@@ -187,7 +192,8 @@ MARK follows the general workflow below:
      primers is kept, whichever amplicons it spans
 
 5. **Variant Calling and Annotation**  
-   Uses `bcftools` for ploidy-1 variant calling and annotates specific targets, including:
+   Uses `freebayes` (since v1.4; `bcftools` up to v1.2.10) for one-copy variant calling, after local
+   realignment of the reads over each region, then `bcftools` to split, filter and annotate the calls, including:
    - Homopolymer regions
    - Blacklist sites
    - Other predefined regions of interest

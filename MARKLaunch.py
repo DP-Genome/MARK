@@ -90,12 +90,17 @@ PARAM_HELP = {
         "Q10 corresponds to about 90% base accuracy."),
     'SAFETY_QUAL': ("Nanopore and Illumina",
         "First variant filter: calls with a quality (QUAL) at or below this value are dropped. Together with "
-        "MIN_DEPTH this produces the *_qual_filtered.vcf files that all later call sets start from."),
+        "MIN_DEPTH this produces the *_qual_filtered.vcf files that all later call sets start from.\n\n"
+        "Since v1.4 QUAL is freebayes' score: about 20-35 per clean supporting read, so the MIN_DEPTH floor "
+        "(10 reads, QUAL about 200) is the stricter filter. Values are not comparable with bcftools (v1.2.10 and earlier)."),
     'STRICT_QUAL': ("Nanopore and Illumina",
         "Final call sets: a single-nucleotide variant needs a quality (QUAL) above this value to enter the "
-        "snps and clean VCFs. Raising it gives fewer, more certain calls."),
+        "snps and clean VCFs. Raising it gives fewer, more certain calls.\n\n"
+        "Since v1.4 QUAL is freebayes' score (about 20-35 per clean supporting read), so 60 corresponds to about "
+        "2-3 reads and works as a backstop; depth, the one-copy genotype and the homopolymer filters do most of "
+        "the work. Raising it far (e.g. 200) can drop real calls whose reads disagree in part."),
     'PILEUP_MAX_DEPTH': ("Nanopore and Illumina",
-        "The most reads bcftools looks at in one position when calling variants; beyond that it uses a "
+        "The most reads the variant caller (freebayes, since v1.4) looks at in one position; beyond that it uses a "
         "subset, and in a whole-genome pileup later positions can be left with almost no reads, so real calls "
         "are lost. 0 (the default) means no limit. If you set a limit and any position in the final BAM "
         "reaches it, the library is listed in WARNINGS.txt."),
@@ -124,6 +129,12 @@ PARAM_HELP = {
     'EXTRA_TRIM': ("Nanopore; Illumina in standard mode",
         "Extra bases removed from both ends of every read after adapter trimming. 0, the script default, "
         "removes nothing. Exact mode on Illumina does not use it."),
+    'FREEBAYES': ("Nanopore and Illumina",
+        "The variant caller (since v1.4). freebayes is installed in its own conda environment, because its "
+        "bioconda builds cannot share one with the other tools on Linux and Apple Silicon:\n\n"
+        "conda create -n mark_fb -c conda-forge -c bioconda freebayes=1.3.10\n\n"
+        "With the default (freebayes), MARK uses freebayes from PATH or, if it is not there, finds an environment "
+        "named mark_fb by itself. To use another copy, override this with its full path."),
     'READQ': ("Illumina",
         "A base counts as good quality if its Phred score is at least this value (fastp). Used with "
         "UNQUAL_PCT when pairs are merged."),
@@ -135,7 +146,7 @@ PARAM_HELP = {
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.2.10 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.4 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -166,6 +177,7 @@ class MitoPipelineDashboard:
             'EXTRA_TRIM': '22',
             'READQ': '20',
             'UNQUAL_PCT': '40',
+            'FREEBAYES': 'freebayes',       # v1.4: the variant caller; found in a mark_fb env if not on PATH
         }
 
         # parameters that take one of a fixed set of values
@@ -563,7 +575,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.2.6",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.4",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
@@ -733,6 +745,21 @@ class MitoPipelineDashboard:
 
     def get_def_path(self, filename):
         return os.path.join(self.script_dir, filename)
+
+    def find_freebayes(self):
+        """freebayes from PATH, else from a conda environment named mark_fb (the MARK.sh / MARK-I.sh search)."""
+        hit = shutil.which('freebayes')
+        if hit:
+            return hit
+        home = os.path.expanduser('~')
+        bases = [os.path.dirname(sys.prefix), sys.prefix + '/envs', os.path.dirname(os.path.dirname(os.environ.get('CONDA_EXE', '/x/x'))) + '/envs',
+                 f'{home}/miniforge3/envs', f'{home}/miniconda3/envs', f'{home}/anaconda3/envs',
+                 '/opt/homebrew/anaconda3/envs', '/opt/anaconda3/envs']
+        for b in bases:
+            p = os.path.join(b, 'mark_fb', 'bin', 'freebayes')
+            if os.access(p, os.X_OK):
+                return p
+        return None
 
     def parse_script_defaults(self, script_path):
         script_defaults = {}
@@ -1515,6 +1542,14 @@ class MitoPipelineDashboard:
             if state['override_var'].get():
                 env[var] = state['entry_var'].get()
 
+        if not self.var_states['FREEBAYES']['override_var'].get():
+            fb = self.find_freebayes()
+            if fb:
+                env['FREEBAYES'] = fb
+                self.log(f"Variant caller: freebayes at {fb}")
+            else:
+                self.log("Warning: freebayes not found on PATH or in a conda environment named mark_fb. Install it with: "
+                         "conda create -n mark_fb -c conda-forge -c bioconda freebayes=1.3.10")
         env['ref'] = self.ref_path.get()
         env['regions_bed'] = self.bed_path.get()
         if self.adapter_path.get():

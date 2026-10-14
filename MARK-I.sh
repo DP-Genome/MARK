@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.2.10"
+VERSION="1.4"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (Illumina) v$VERSION"
@@ -103,6 +103,25 @@ MIN_DEPTH="${MIN_DEPTH:-10}"
 # drops real calls (see flag_pileup_cap). bcftools gets its own maximum for 0, never 0 itself.
 PILEUP_MAX_DEPTH="${PILEUP_MAX_DEPTH:-0}"
 BCF_MAX_DEPTH="$PILEUP_MAX_DEPTH"; [[ "$BCF_MAX_DEPTH" -le 0 ]] && BCF_MAX_DEPTH=2147483647
+# v1.4: variants are called with freebayes (local realignment, one copy). PILEUP_MAX_DEPTH > 0 is passed
+# to it as --limit-coverage; 0 (default) = no limit.
+_fb_user="${FREEBAYES:-}"                 # set by the user: used as given, never replaced
+FREEBAYES="${FREEBAYES:-freebayes}"
+# freebayes is installed in its own conda environment (its bioconda builds cannot share one with the
+# validated htslib/fastp versions on Linux and Apple Silicon). If it is not on PATH and FREEBAYES is not set,
+# look for an environment named mark_fb beside the active one or in the usual conda locations.
+if [[ -z "$_fb_user" ]] && ! command -v "$FREEBAYES" >/dev/null 2>&1; then
+  _ce="${CONDA_EXE:-}"
+  for _fb in "${CONDA_PREFIX:-/nonexistent}/../mark_fb/bin/freebayes" "${CONDA_PREFIX:-/nonexistent}/envs/mark_fb/bin/freebayes" \
+             "${_ce%/bin/conda}/envs/mark_fb/bin/freebayes" "$HOME/miniforge3/envs/mark_fb/bin/freebayes" \
+             "$HOME/miniconda3/envs/mark_fb/bin/freebayes" "$HOME/anaconda3/envs/mark_fb/bin/freebayes" \
+             "/opt/homebrew/anaconda3/envs/mark_fb/bin/freebayes" "/opt/anaconda3/envs/mark_fb/bin/freebayes"; do
+    if [[ -x "$_fb" ]]; then FREEBAYES="$_fb"; break; fi
+  done
+  unset _ce _fb
+fi
+unset _fb_user
+FB_LIMIT=""; [[ "$PILEUP_MAX_DEPTH" -gt 0 ]] && FB_LIMIT="--limit-coverage $PILEUP_MAX_DEPTH"
 # bcftools keeps a SEPARATE depth cap for indel candidates (--max-idepth,
 # default 250). Raising -d alone leaves it at 250, which silently stops indel
 # candidate generation above 250x - i.e. everywhere in this panel. Tie it to
@@ -323,8 +342,8 @@ flag_low_depth() {   # $1 = library, $2 = final BAM
   done
 }
 
-# v1.2.10: bcftools mpileup reads at most PILEUP_MAX_DEPTH reads per position. When a whole-BAM pileup
-# reaches it, bcftools skips reads and later positions can be left almost empty, so real calls are lost.
+# v1.2.10: the variant caller reads at most PILEUP_MAX_DEPTH reads per position (v1.4: freebayes
+# --limit-coverage). When a limit is reached, reads are dropped and real calls can be lost.
 # The highest depth in the final BAM (deletions counted, no quality filter, as bcftools counts reads) must stay
 # below it; otherwise the library is flagged and PILEUP_MAX_DEPTH must be raised.
 flag_pileup_cap() {   # $1 = library, $2 = final BAM
@@ -334,11 +353,11 @@ flag_pileup_cap() {   # $1 = library, $2 = final BAM
   echo "[Depth] highest read depth in the final BAM: ${mdepth}x at rCRS $mat (PILEUP_MAX_DEPTH ${PILEUP_MAX_DEPTH}; 0 = no limit)" | tee -a "$log_file"
   if [[ "$PILEUP_MAX_DEPTH" -gt 0 && "${mdepth:-0}" -ge "$PILEUP_MAX_DEPTH" ]]; then
     mark_warn "$1" "depth at or above PILEUP_MAX_DEPTH" "all" "${mdepth}x" "${PILEUP_MAX_DEPTH}x" "-" "-" \
-      "bcftools skips reads beyond PILEUP_MAX_DEPTH, so calls may be missing; rerun with PILEUP_MAX_DEPTH above ${mdepth}"
+      "the variant caller drops reads beyond PILEUP_MAX_DEPTH, so calls may be missing; rerun with PILEUP_MAX_DEPTH above ${mdepth}"
     {
       echo "################################################################################"
       echo "## WARNING: $1 - read depth reaches ${mdepth}x (rCRS $mat), at or above PILEUP_MAX_DEPTH (${PILEUP_MAX_DEPTH})."
-      echo "##          bcftools skips reads beyond it, so variant calls may be MISSING."
+      echo "##          The variant caller drops reads beyond it, so variant calls may be MISSING."
       echo "##          Rerun with PILEUP_MAX_DEPTH set above ${mdepth}."
       echo "################################################################################"
     } | tee -a "$log_file" >&2
@@ -389,6 +408,7 @@ if $need_bwa_index; then
 fi
 [[ -f "${ref}.fai" ]] || samtools faidx "$ref"
 
+command -v "$FREEBAYES" >/dev/null 2>&1 || { echo "Error: freebayes (the variant caller since v1.4) was not found. Install it in its own environment:"; echo "  conda create -n mark_fb -c conda-forge -c bioconda freebayes=1.3.10"; echo "MARK finds an environment named mark_fb by itself; otherwise set FREEBAYES=/path/to/freebayes."; exit 1; }
 command -v fastp >/dev/null 2>&1 || { echo "Error: fastp not found."; exit 1; }
 
 # --- Output Folder Setup ---
@@ -526,6 +546,7 @@ run_summary_file="$run_out/run_summary.txt"
   echo "## MAPQ_MIN       : $MAPQ_MIN"
   echo "## BASEQ_MIN      : $BASEQ_MIN"
   echo "## PILEUP_DEPTH   : $PILEUP_MAX_DEPTH"
+  echo "## VARIANT CALLER : freebayes $("$FREEBAYES" --version 2>/dev/null | awk '{print $NF}') ($(command -v "$FREEBAYES"))"
   echo "## PILEUP_IDEPTH  : $PILEUP_MAX_IDEPTH"
   echo "## MIN_ALIGNED_POST: $MIN_ALIGNED_POST (template bases a read must align after primer clipping; else read and mate removed)"
   echo "## ALIGNED_WARN   : ${ALIGNED_WARN_PCT}% of an amplicon's fragments removed by that check, at least $ALIGNED_WARN_MIN (flagged in WARNINGS.txt)"
@@ -776,7 +797,7 @@ for r1 in "${files[@]}"; do
   # Baseline Variant Calling
   vcf_raw_base="$sample_out/${base}_baseline_raw.vcf"
   vcf_qual_base="$sample_out/${base}_baseline_qual_filtered.vcf"
-  run_log bash -c "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $BCF_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_baseline' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_base'; }"
+  run_log bash -c "{ $FREEBAYES -f '$ref' -p 1 -E -1 --min-mapping-quality $MAPQ_MIN --min-base-quality $BASEQ_MIN $FB_LIMIT '$bam_baseline' | bcftools norm -m -any --atomize -f '$ref' -Ou 2>/dev/null | bcftools norm -m -any -Ou 2>/dev/null | bcftools view -i 'GT=\"alt\" && ALT!=\"*\"' -Ou | bcftools sort -Ov -o '$vcf_raw_base' 2>/dev/null; }"
   run_log bcftools filter -i "QUAL>$SAFETY_QUAL && INFO/DP>=$MIN_DEPTH" -Ov -o "$vcf_qual_base" "$vcf_raw_base"
 
   # Baseline Annotation
@@ -1055,7 +1076,7 @@ if AMPS:
   # Trimmed Variant Calling
   vcf_raw_trimmed="$sample_out/${base}_trimmed_raw.vcf"
   vcf_qual_trimmed="$sample_out/${base}_trimmed_qual_filtered.vcf"
-  run_log bash -c "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $BCF_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam_trimmed' | bcftools call -mv --ploidy 1 -Ov -o '$vcf_raw_trimmed'; }"
+  run_log bash -c "{ $FREEBAYES -f '$ref' -p 1 -E -1 --min-mapping-quality $MAPQ_MIN --min-base-quality $BASEQ_MIN $FB_LIMIT '$bam_trimmed' | bcftools norm -m -any --atomize -f '$ref' -Ou 2>/dev/null | bcftools norm -m -any -Ou 2>/dev/null | bcftools view -i 'GT=\"alt\" && ALT!=\"*\"' -Ou | bcftools sort -Ov -o '$vcf_raw_trimmed' 2>/dev/null; }"
   run_log bcftools filter -i "QUAL>$SAFETY_QUAL && INFO/DP>=$MIN_DEPTH" -Ov -o "$vcf_qual_trimmed" "$vcf_raw_trimmed"
 
   # Trimmed Annotation

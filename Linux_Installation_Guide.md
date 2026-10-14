@@ -17,6 +17,11 @@ conda activate mark_env
 
 # 3. Install the mark_pipeline package
 conda install -c akmartian -c conda-forge -c bioconda mark_pipeline -y
+
+# 4. Install freebayes, the variant caller since v1.4, in its own environment.
+#    (Its bioconda builds need older htslib/libdeflate than the other tools, so they cannot share one.)
+#    MARK finds an environment named mark_fb by itself, or set FREEBAYES=/path/to/freebayes.
+conda create -n mark_fb -c conda-forge -c bioconda freebayes=1.3.10 -y
 ```
 
 ## 2. Verify Installation
