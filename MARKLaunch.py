@@ -146,7 +146,7 @@ PARAM_HELP = {
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.4 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.4.1 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -575,7 +575,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.4",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.4.1",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
@@ -1756,7 +1756,7 @@ class MitoPipelineDashboard:
 
 The result of this run:
   corrected_vcfs/   the calls. One pair per library:
-                      <library>_trimmed_clean_corrected.vcf  SNVs called, outside homopolymer and blacklisted sites
+                      <library>_trimmed_clean_corrected.vcf  SNVs called, outside homopolymer regions and excluded sites
                       <library>_trimmed_snps_corrected.vcf   SNVs called, homopolymer sites included
                     Positions are rCRS ({chrom}), sorted.
   cleaned_bams/     the final BAM of each library (<library>_trimmed_sorted_cleaned.bam), primer bases

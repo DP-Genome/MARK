@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.4"
+VERSION="1.4.1"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"
@@ -821,14 +821,16 @@ for fq in "${files[@]}"; do
   # Baseline Annotation
   if [[ -s "$vcf_qual_base" ]]; then
     sample_bed="$sample_out/${base}_targets.bed"
-    sed "s/PLACEHOLDER_CHROM/$ref_chrom_name/g" "$regions_bed" > "$sample_bed"
-    echo '##INFO=<ID=RegionType,Number=1,Type=String,Description="Type of region (HP_Region or Blacklist_Site)">' > "$sample_out/hdr.txt"
+    # v1.4.1: region BEDs written before v1.4.1 use an older label for the excluded sites; the working copy uses
+    # the current one, so only Excluded_Site ever reaches the VCFs and reports
+    sed -e "s/PLACEHOLDER_CHROM/$ref_chrom_name/g" -e "s/Blacklist_Site/Excluded_Site/g" "$regions_bed" > "$sample_bed"
+    echo '##INFO=<ID=RegionType,Number=1,Type=String,Description="Type of region (HP_Region or Excluded_Site)">' > "$sample_out/hdr.txt"
 
     vcf_annotated_base="$sample_out/${base}_baseline_annotated_all.vcf"
     run_log bcftools annotate -a "$sample_bed" -c CHROM,FROM,TO,RegionType -h "$sample_out/hdr.txt" -Ov -o "$vcf_annotated_base" "$vcf_qual_base"
 
     run_log bash -c "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_base' | bcftools filter -e 'POS=7898 || POS=7899 || POS=8595' -Ov -o '$sample_out/${base}_baseline_snps.vcf'"
-    run_log bash -c "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_base' | bcftools filter -e 'RegionType=\"HP_Region\" || RegionType=\"Blacklist_Site\"' -Ov -o '$sample_out/${base}_baseline_clean.vcf'"
+    run_log bash -c "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_base' | bcftools filter -e 'RegionType=\"HP_Region\" || RegionType=\"Excluded_Site\"' -Ov -o '$sample_out/${base}_baseline_clean.vcf'"
     run_log bcftools filter -i 'RegionType="HP_Region"' -Ov -o "$sample_out/${base}_baseline_homopolymers.vcf" "$vcf_annotated_base"
   fi
 
@@ -1103,7 +1105,7 @@ if AMPS:
     run_log bcftools annotate -a "$sample_bed" -c CHROM,FROM,TO,RegionType -h "$sample_out/hdr.txt" -Ov -o "$vcf_annotated_trimmed" "$vcf_qual_trimmed"
 
     run_log bash -c "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_trimmed' | bcftools filter -e 'POS=7898 || POS=7899 || POS=8595' -Ov -o '$sample_out/${base}_trimmed_snps.vcf'"
-    run_log bash -c "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_trimmed' | bcftools filter -e 'RegionType=\"HP_Region\" || RegionType=\"Blacklist_Site\"' -Ov -o '$sample_out/${base}_trimmed_clean.vcf'"
+    run_log bash -c "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '$vcf_annotated_trimmed' | bcftools filter -e 'RegionType=\"HP_Region\" || RegionType=\"Excluded_Site\"' -Ov -o '$sample_out/${base}_trimmed_clean.vcf'"
     run_log bcftools filter -i 'RegionType="HP_Region"' -Ov -o "$sample_out/${base}_trimmed_homopolymers.vcf" "$vcf_annotated_trimmed"
     
 # =========================================================================
@@ -1120,7 +1122,7 @@ import sys, os
 # v1.2.8: the sample report is built from the VCFs of the final (primer-clipped) BAM only. The review
 # ("baseline") VCFs and the unfiltered *_raw.vcf are not read: they carry primer bases and sites below
 # the depth and quality floors, which are not calls.
-#   calls                 <base>_trimmed_clean.vcf (SNVs, QUAL > STRICT_QUAL, outside homopolymer and blacklisted sites)
+#   calls                 <base>_trimmed_clean.vcf (SNVs, QUAL > STRICT_QUAL, outside homopolymer regions and excluded sites)
 #   review sections       every other record of <base>_trimmed_annotated_all.vcf (QUAL > SAFETY_QUAL, depth >= MIN_DEPTH)
 sample_dir, base_name, version, strict_q, safety_q, min_depth = sys.argv[1:7]
 het_output = os.path.join(sample_dir, base_name + "_final_sample_report.tsv")
@@ -1184,8 +1186,8 @@ for k, v in everything.items():
     elif v["region_type"] == "HP_Region":
         v["why"] = "homopolymer region; not called"
         length_hp[k] = v
-    elif v["region_type"] == "Blacklist_Site":
-        v["why"] = "blacklisted site; not called"
+    elif v["region_type"] == "Excluded_Site":
+        v["why"] = "excluded site; not called"
         below[k] = v
     else:
         v["why"] = "QUAL %.0f, calls need > %s" % (v["qual"], strict_q)
@@ -1228,7 +1230,7 @@ with open(het_output, "w") as out:
 
     out.write(f"# MARK v{version} sample report: {base_name}\n")
     out.write(f"# From the final (primer-clipped) BAM only. Calls = {base_name}_trimmed_clean.vcf: SNVs with QUAL > {strict_q} "
-              f"and depth >= {min_depth}, outside homopolymer and blacklisted sites. The review sections list the other "
+              f"and depth >= {min_depth}, outside homopolymer regions and excluded sites. The review sections list the other "
               f"sites with QUAL > {safety_q} ({base_name}_trimmed_annotated_all.vcf); they are not calls. "
               f"Heteroplasmy % = reads with the variant / read depth.\n")
     out.write("### MAIN RESULTS (the calls) ###\n")
@@ -1237,7 +1239,7 @@ with open(het_output, "w") as out:
     out.write("\n### LENGTH VARIANTS AND HOMOPOLYMER SITES (for review, not calls) ###\n")
     out.write(HEADER)
     write_variants(length_hp)
-    out.write("\n### BELOW THE CALL THRESHOLD OR AT A BLACKLISTED SITE (for review, not calls) ###\n")
+    out.write("\n### BELOW THE CALL THRESHOLD OR AT AN EXCLUDED SITE (for review, not calls) ###\n")
     out.write(HEADER)
     write_variants(below)
 ' "$sample_out" "$base" "$VERSION" "$STRICT_QUAL" "$SAFETY_QUAL" "$MIN_DEPTH"

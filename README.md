@@ -195,7 +195,7 @@ MARK follows the general workflow below:
    Uses `freebayes` (since v1.4; `bcftools` up to v1.2.10) for one-copy variant calling, after local
    realignment of the reads over each region, then `bcftools` to split, filter and annotate the calls, including:
    - Homopolymer regions
-   - Blacklist sites
+   - Excluded sites (known artefact positions, e.g. rCRS 310, 16182 and 16183)
    - Other predefined regions of interest
 
 6. **VCF Export**  
