@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.4.1"
+VERSION="1.4.2"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (Illumina) v$VERSION"
@@ -1106,7 +1106,30 @@ import sys, os
 # the depth and quality floors, which are not calls.
 #   calls                 <base>_trimmed_clean.vcf (SNVs, QUAL > STRICT_QUAL, outside homopolymer regions and excluded sites)
 #   review sections       every other record of <base>_trimmed_annotated_all.vcf (QUAL > SAFETY_QUAL, depth >= MIN_DEPTH)
-sample_dir, base_name, version, strict_q, safety_q, min_depth = sys.argv[1:7]
+sample_dir, base_name, version, strict_q, safety_q, min_depth, ref_fa = sys.argv[1:8]
+# v1.4.2: variants are written in forensic notation (ISFG / EMPOP): SNVs as 152C; an insertion or deletion is moved to
+# the 3-prime end of the repeat it lies in and numbered there (VCF 310 T>TC -> 315.1C; a CA deletion in 514-523 -> 523del
+# 524del). The linearised reference is needed for that shift.
+LSEQ = "".join(l.strip() for l in open(ref_fa) if not l.startswith(">")).upper()
+real = lambda lin: (lin + 8284) % 16569 or 16569
+def forensic(lin_pos, ref, alt):
+    """forensic notation of one VCF record on the linearised reference (1-based)"""
+    if len(ref) == len(alt):
+        return " ".join(f"{real(lin_pos + i)}{b}" for i, (a, b) in enumerate(zip(ref, alt)) if a != b)
+    m = 0
+    while m < min(len(ref), len(alt)) and ref[m] == alt[m]: m += 1
+    if m == 0 or (alt[m:] and ref[m:]):                    # not a plain insertion or deletion
+        return f"{real(lin_pos)}{ref}>{alt}"
+    if len(alt) > len(ref):                                # insertion of ins after linear position a
+        ins, a = alt[m:], lin_pos + m - 1
+        while a < len(LSEQ) and LSEQ[a] == ins[0]:         # LSEQ[a] is the base after position a (1-based)
+            ins = ins[1:] + ins[0]; a += 1
+        return " ".join(f"{real(a)}.{i + 1}{b}" for i, b in enumerate(ins))
+    dele, s0 = ref[m:], lin_pos + m                        # deletion of dele starting at linear position s0
+    e0 = s0 + len(dele) - 1
+    while e0 < len(LSEQ) and LSEQ[e0] == dele[0]:
+        dele = dele[1:] + dele[0]; s0 += 1; e0 += 1
+    return " ".join(f"{real(x)}del" for x in range(s0, e0 + 1))
 het_output = os.path.join(sample_dir, base_name + "_final_sample_report.tsv")
 
 
@@ -1185,25 +1208,19 @@ with open(het_output, "w") as out:
             real_pos = (lin_pos + 8284) % 16569
             if real_pos == 0: real_pos = 16569
             region_name, range_cov = get_region(real_pos)
+            variant_called = forensic(lin_pos, ref, alt)
             if len(ref) == 1 and len(alt) == 1:
                 disp_ref = ref
-                variant_called = f"m.{real_pos}{alt}"
                 notes = f"m.{real_pos}{ref}>{alt}"
                 het_status = f"Homoplasmic {vaf:.0f}%" if vaf > 95.0 else f"{vaf:.0f}% PHP"
             elif len(ref) > len(alt):
                 del_seq = ref[len(alt):]
                 disp_ref = del_seq
-                del_start = real_pos + len(alt)
-                if len(del_seq) == 1:
-                    variant_called = f"m.{del_start}del"
-                else:
-                    variant_called = f"m.{del_start}_{del_start + len(del_seq) - 1}del"
-                notes = "Deletion"
+                notes = f"Deletion (VCF: {real_pos} {ref}>{alt})"
                 het_status = f"Homoplasmic {vaf:.0f}%" if vaf > 95.0 else f"{vaf:.0f}% LHP"
             else:
                 disp_ref = "-"
-                variant_called = f"m.{real_pos}.1{alt[len(ref):]}"
-                notes = "Insertion"
+                notes = f"Insertion (VCF: {real_pos} {ref}>{alt})"
                 het_status = f"Homoplasmic {vaf:.0f}%" if vaf > 95.0 else f"{vaf:.0f}% LHP"
             if "why" in v:
                 notes = notes + "; " + v["why"]
@@ -1214,7 +1231,8 @@ with open(het_output, "w") as out:
     out.write(f"# From the final (primer-clipped) BAM only. Calls = {base_name}_trimmed_clean.vcf: SNVs with QUAL > {strict_q} "
               f"and depth >= {min_depth}, outside homopolymer regions and excluded sites. The review sections list the other "
               f"sites with QUAL > {safety_q} ({base_name}_trimmed_annotated_all.vcf); they are not calls. "
-              f"Heteroplasmy % = reads with the variant / read depth.\n")
+              f"Heteroplasmy % = reads with the variant / read depth. Variants in forensic notation (ISFG/EMPOP): "
+              f"insertions and deletions at the 3-prime end of the repeat they lie in, e.g. 315.1C.\n")
     out.write("### MAIN RESULTS (the calls) ###\n")
     out.write(HEADER)
     write_variants(calls)
@@ -1224,7 +1242,7 @@ with open(het_output, "w") as out:
     out.write("\n### BELOW THE CALL THRESHOLD OR AT AN EXCLUDED SITE (for review, not calls) ###\n")
     out.write(HEADER)
     write_variants(below)
-' "$sample_out" "$base" "$VERSION" "$STRICT_QUAL" "$SAFETY_QUAL" "$MIN_DEPTH"
+' "$sample_out" "$base" "$VERSION" "$STRICT_QUAL" "$SAFETY_QUAL" "$MIN_DEPTH" "$ref"
 
     rm -f "$sample_bed" "$sample_out/hdr.txt"
   fi
