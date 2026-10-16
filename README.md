@@ -226,7 +226,8 @@ MARK_<input>_<timestamp>_output/
     ├── WARNINGS.txt, run_summary.txt
     ├── corrected_vcfs/        # the calls: <library>_trimmed_clean / _trimmed_snps _corrected.vcf, rCRS coordinates
     ├── cleaned_bams/          # the final BAM of each library (primer bases soft-clipped)
-    ├── sample_reports/        # <library>_final_sample_report.tsv: calls with heteroplasmy and depth
+    ├── sample_reports/        # <library>_final_sample_report.tsv: calls with heteroplasmy and depth; variants in forensic notation
+    │                          #   (ISFG/EMPOP: e.g. 152C, 315.1C, 523del 524del), the VCF record beside each indel
     ├── qc/                    # per-amplicon depth; fragments removed after alignment
     ├── reference/             # the linearised reference the BAMs are aligned to, for IGV
     └── review/                # every other VCF, and the review ("baseline") BAM
