@@ -31,7 +31,7 @@ Both pipelines map reads to a **linearized mitochondrial reference** and split t
    Uses unmodified alignments.
 
 2. **Trimmed Track**  
-   Resolves overlapping amplicons by assigning reads to a primary amplicon using a maximum-overlap rule. The pipeline then applies CIGAR soft-clipping to enforce tiled amplicon boundaries, reducing internal gaps and overlap-driven artifacts.
+   Exact amplicon trimming: a read is kept only if it is one whole PCR product (the forward and reverse primer of the same amplicon). After alignment, the primer bases at each product end are hard-clipped (CIGAR H; `CLIP_MODE=soft` keeps them as soft clips, as up to v1.4.2), so that only insert bases reach variant calling.
 
 ---
 
@@ -225,7 +225,7 @@ MARK_<input>_<timestamp>_output/
     ├── README.txt             # what every folder holds
     ├── WARNINGS.txt, run_summary.txt
     ├── corrected_vcfs/        # the calls: <library>_trimmed_clean / _trimmed_snps _corrected.vcf, rCRS coordinates
-    ├── cleaned_bams/          # the final BAM of each library (primer bases soft-clipped)
+    ├── cleaned_bams/          # the final BAM of each library (primer bases hard-clipped; CLIP_MODE=soft keeps them)
     ├── sample_reports/        # <library>_final_sample_report.tsv: calls with heteroplasmy and depth; variants in forensic notation
     │                          #   (ISFG/EMPOP: e.g. 152C, 315.1C, 523del 524del), the VCF record beside each indel
     ├── qc/                    # per-amplicon depth; fragments removed after alignment
