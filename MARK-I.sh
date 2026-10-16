@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.4.2"
+VERSION="1.4.3"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (Illumina) v$VERSION"
@@ -44,6 +44,7 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  MIN_LEN_POST=\"90\"        Shortest product kept after trimming (same window as nanopore)"
   echo -e "  MAX_LEN_POST=\"300\"       Longest product kept after trimming (same window as nanopore)"
   echo -e "  MIN_ALIGNED_POST=\"30\"    Template bases a read must align after primer clipping (else read and mate dropped)"
+  echo -e "  CLIP_MODE=\"hard\"         Primer clipping after alignment: hard (default since v1.4.3; primer bases removed from the read) or soft (kept in the BAM)"
   echo -e "  ALIGNED_WARN_PCT=\"20\"    Flag an amplicon in WARNINGS.txt if that check removes this % of its fragments"
   echo -e "  (MIN_DEPTH also flags an amplicon in WARNINGS.txt when any insert position is below it in the final BAM)"
   echo -e "  EXTRA_TRIM=\"0\"           Extra bases to trim from both ends"
@@ -158,8 +159,8 @@ fi
 ADAPTER_FILE="$(mark_resolve "$ADAPTER_FILE")"
 
 # --- Trimming mode --------------------------------------------------------------------
-# Both modes remove the library adapters, and in both the primer-footprint step later soft-clips
-# the primer bases in the BAM. They differ in how a read is cut and which reads are kept:
+# Both modes remove the library adapters, and in both the primer-footprint step later clips
+# the primer bases in the BAM (CLIP_MODE: hard by default since v1.4.3, or soft). They differ in how a read is cut and which reads are kept:
 # TRIM_MODE=standard : the pre-v1.2.4 path - adapter sequences from the adapter list are cut
 #                      wherever they are found, and any read long enough afterwards is kept.
 # TRIM_MODE=exact    : the default since v1.2.6 - every read is cut at its own amplicon
@@ -167,9 +168,14 @@ ADAPTER_FILE="$(mark_resolve "$ADAPTER_FILE")"
 #                      the SAME amplicon, with nothing but library adapter outside them, and is cut
 #                      exactly at the outer primer ends. The primers stay on the read on purpose: the
 #                      product coordinates in CRM_Nested_products.bed include them, and the
-#                      primer-footprint step soft-clips them in the BAM, so no primer base reaches
+#                      primer-footprint step clips them in the BAM (hard clips by default), so no primer base reaches
 #                      the caller.
 # The v1.2.4-v1.2.6 names still work: adapters = standard, primers = exact.
+# v1.4.3: primer bases are hard-clipped after alignment (CIGAR H, the bases removed from the read); CLIP_MODE=soft keeps
+# them in the BAM as soft clips (CIGAR S), as up to v1.4.2. Both give identical variant calls.
+CLIP_MODE="${CLIP_MODE:-hard}"
+[[ "$CLIP_MODE" == "hard" || "$CLIP_MODE" == "soft" ]] || { echo "Error: CLIP_MODE must be hard or soft (got '$CLIP_MODE')."; exit 1; }
+export CLIP_MODE
 TRIM_MODE="${TRIM_MODE:-exact}"
 case "$TRIM_MODE" in
   adapters) echo "[Note] TRIM_MODE=adapters is now called TRIM_MODE=standard"; TRIM_MODE=standard ;;
@@ -535,6 +541,7 @@ run_summary_file="$run_out/run_summary.txt"
   echo "## Adapter File   : $(realpath "$ADAPTER_FILE")"
   echo "##"
   echo "## --- PRE-PROCESSING & TRIMMING ---"
+  echo "## CLIP_MODE      : $CLIP_MODE ($([[ "$CLIP_MODE" == "hard" ]] && echo "primer bases hard-clipped: removed from the reads" || echo "primer bases soft-clipped: kept in the BAM"))"
   echo "## TRIM_MODE      : $TRIM_MODE$([[ "$TRIM_MODE" == "exact" ]] && echo " (reads cut to one whole amplicon)" || echo " (adapter-list trimming)")"
   echo "## FASTP MERGE    : READQ=$READQ | UNQUAL_PCT=$UNQUAL_PCT | MIN_LEN(raw)=$MIN_LEN"
   echo "## MIXED MATCH    : ERR=$CUTADAPT_ERR | OVL=$CUTADAPT_OVL | MIN_LEN_POST=$MIN_LEN_POST "
@@ -818,7 +825,7 @@ for r1 in "${files[@]}"; do
 
 
   # =========================================================================
-  # TRACK B: EXPERIMENTAL (PYTHON TRIMMING/SOFT-CLIPPING)
+  # TRACK B: EXPERIMENTAL (PYTHON TRIMMING/PRIMER CLIPPING)
   # =========================================================================
   echo "[Pipeline] Generating TRIMMED track..." | tee -a "$log_file"
   bam_trimmed="$sample_out/${base}_trimmed_sorted.bam"
@@ -1024,12 +1031,27 @@ for line in sys.stdin:
         else:
             condensed.append([length, op])
 
-    # Reconstruct the Soft-Clipped CIGAR
-    final_cigar = ""
-    if left_clip > 0: final_cigar += f"{left_clip}S"
-    for length, op in condensed:
-        final_cigar += f"{length}{op}"
-    if right_clip > 0: final_cigar += f"{right_clip}S"
+    # Reconstruct the CIGAR. v1.4.3: CLIP_MODE=hard (default) writes hard clips (H) and removes the clipped bases from
+    # SEQ and QUAL; hard clips the aligner already made (supplementary pieces) are kept and added to the count.
+    # CLIP_MODE=soft writes soft clips (S) and keeps the bases, as up to v1.4.2.
+    if os.environ.get("CLIP_MODE", "hard") == "hard":
+        ops = cigar_re.findall(cigar)
+        lead_h = int(ops[0][0]) if ops and ops[0][1] == "H" else 0
+        trail_h = int(ops[-1][0]) if len(ops) > 1 and ops[-1][1] == "H" else 0
+        n_seq = len(seq)
+        parts[9] = seq[left_clip:n_seq - right_clip]
+        parts[10] = qual[left_clip:n_seq - right_clip]
+        final_cigar = ""
+        if left_clip + lead_h > 0: final_cigar += f"{left_clip + lead_h}H"
+        for length, op in condensed:
+            final_cigar += f"{length}{op}"
+        if right_clip + trail_h > 0: final_cigar += f"{right_clip + trail_h}H"
+    else:
+        final_cigar = ""
+        if left_clip > 0: final_cigar += f"{left_clip}S"
+        for length, op in condensed:
+            final_cigar += f"{length}{op}"
+        if right_clip > 0: final_cigar += f"{right_clip}S"
 
     parts[3] = str(new_pos + 1)
     parts[5] = final_cigar
