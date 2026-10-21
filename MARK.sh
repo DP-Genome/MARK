@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.4.3"
+VERSION="1.5"
 
 if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "MARK Pipeline (ONT) v$VERSION"
@@ -37,6 +37,7 @@ if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
   echo -e "  This script relies on environment variables for configuration."
   echo -e "\nCOMMON OVERRIDE VARIABLES (with defaults):"
   echo -e "  threads=\"8\"              Number of CPU threads to use"
+  echo -e "  VARIANT_CALLER=\"freebayes\" Variant caller: freebayes (default), bcftools, or both (freebayes calls, compared with bcftools)"
   echo -e "  MIN_DEPTH=\"10\"           Minimum depth for variant calling"
   echo -e "  QS_MIN=\"10\"              Minimum average read quality (fastplong)"
   echo -e "  CUTADAPT_STALL_SECS=\"600\" Seconds without cutadapt output before it is killed and rerun single-core"
@@ -120,6 +121,20 @@ if [[ -z "$_fb_user" ]] && ! command -v "$FREEBAYES" >/dev/null 2>&1; then
 fi
 unset _fb_user
 FB_LIMIT=""; [[ "$PILEUP_MAX_DEPTH" -gt 0 ]] && FB_LIMIT="--limit-coverage $PILEUP_MAX_DEPTH"
+# v1.5: the variant caller. freebayes (default since v1.4) realigns the reads over each candidate region and judges
+# whole haplotypes; bcftools (mpileup + call, as MARK used up to v1.2.10) judges each position on its own.
+#   freebayes   freebayes makes the calls
+#   bcftools    bcftools makes the calls (same file names, same filters)
+#   both        freebayes makes the calls (the usual files); bcftools also runs on the final BAM, its call sets are
+#               written beside them (<lib>_trimmed_bcftools_*.vcf), and the two are compared:
+#               <lib>_trimmed_snps_both_callers.vcf (every SNV in either snps set, tagged CALLERS=both / freebayes_only /
+#               bcftools_only) and <lib>_caller_comparison.txt (what each caller called, in plain text)
+VARIANT_CALLER="${VARIANT_CALLER:-freebayes}"
+case "$VARIANT_CALLER" in
+  freebayes|bcftools|both) ;;
+  *) echo "Error: VARIANT_CALLER must be freebayes, bcftools or both (got '$VARIANT_CALLER')."; exit 1 ;;
+esac
+PRIMARY_CALLER="freebayes"; [[ "$VARIANT_CALLER" == "bcftools" ]] && PRIMARY_CALLER="bcftools"
 # bcftools keeps a SEPARATE depth cap for indel candidates (--max-idepth,
 # default 250). Raising -d alone leaves it at 250, which silently stops indel
 # candidate generation above 250x - i.e. everywhere in this panel. Tie it to
@@ -488,7 +503,7 @@ if [[ -z "$ADAPTER_FILE" || ! -f "$ADAPTER_FILE" ]]; then
   exit 1
 fi
 
-command -v "$FREEBAYES" >/dev/null 2>&1 || { echo "Error: freebayes (the variant caller since v1.4) was not found. Install it in its own environment:"; echo "  conda create -n mark_fb -c conda-forge -c bioconda freebayes=1.3.10"; echo "MARK finds an environment named mark_fb by itself; otherwise set FREEBAYES=/path/to/freebayes."; exit 1; }
+[[ "$VARIANT_CALLER" == "bcftools" ]] || command -v "$FREEBAYES" >/dev/null 2>&1 || { echo "Error: freebayes (the variant caller since v1.4) was not found. Install it in its own environment:"; echo "  conda create -n mark_fb -c conda-forge -c bioconda freebayes=1.3.10"; echo "MARK finds an environment named mark_fb by itself; otherwise set FREEBAYES=/path/to/freebayes."; exit 1; }
 command -v fastplong >/dev/null 2>&1 || { echo "Error: fastplong not found."; exit 1; }
 
 # --- Output Folder Setup ---
@@ -535,6 +550,17 @@ fi
 mkdir -p "$run_out"
 
 ref_chrom_name=$(head -n1 "$ref" | cut -d ' ' -f1 | tr -d '>')
+
+# v1.5: one call set from one BAM. Both callers end the same way: multi-base records split into single bases,
+# only records whose (one-copy) genotype is the variant, sorted. The bcftools command is the one MARK used up to v1.2.10.
+call_variants() {
+  local caller="$1" bam="$2" out="$3"
+  if [[ "$caller" == "bcftools" ]]; then
+    run_log bash -c "{ bcftools mpileup -a FORMAT/AD,FORMAT/DP -d $BCF_MAX_DEPTH --max-idepth $PILEUP_MAX_IDEPTH -Q$BASEQ_MIN -q$MAPQ_MIN -Ou -f '$ref' '$bam' 2>/dev/null | bcftools call -mv --ploidy 1 -Ou 2>/dev/null | bcftools norm -m -any --atomize -f '$ref' -Ou 2>/dev/null | bcftools norm -m -any -Ou 2>/dev/null | bcftools view -i 'GT=\"alt\" && ALT!=\"*\"' -Ou | bcftools sort -Ov -o '$out' 2>/dev/null; }"
+  else
+    run_log bash -c "{ $FREEBAYES -f '$ref' -p 1 -E -1 --min-mapping-quality $MAPQ_MIN --min-base-quality $BASEQ_MIN $FB_LIMIT '$bam' | bcftools norm -m -any --atomize -f '$ref' -Ou 2>/dev/null | bcftools norm -m -any -Ou 2>/dev/null | bcftools view -i 'GT=\"alt\" && ALT!=\"*\"' -Ou | bcftools sort -Ov -o '$out' 2>/dev/null; }"
+  fi
+}
 
 run_log() {
   {
@@ -644,7 +670,14 @@ run_summary_file="$run_out/run_summary.txt"
   echo "## MAPQ_MIN       : $MAPQ_MIN"
   echo "## BASEQ_MIN      : $BASEQ_MIN"
   echo "## PILEUP_DEPTH   : $PILEUP_MAX_DEPTH"
-  echo "## VARIANT CALLER : freebayes $("$FREEBAYES" --version 2>/dev/null | awk '{print $NF}') ($(command -v "$FREEBAYES"))"
+  _fbv="freebayes $("$FREEBAYES" --version 2>/dev/null | awk '{print $NF}') ($(command -v "$FREEBAYES"))"
+  _bcv="bcftools $(bcftools --version 2>/dev/null | awk 'NR==1{print $2}') (mpileup + call -m, one copy)"
+  case "$VARIANT_CALLER" in
+    freebayes) echo "## VARIANT CALLER : $_fbv" ;;
+    bcftools)  echo "## VARIANT CALLER : $_bcv" ;;
+    both)      echo "## VARIANT CALLER : both - calls by $_fbv; compared with $_bcv" ;;
+  esac
+  unset _fbv _bcv
   echo "## PILEUP_IDEPTH  : $PILEUP_MAX_IDEPTH"
   echo "## MIN_ALIGNED_POST: $MIN_ALIGNED_POST (template bases a read must align after primer clipping; else read and mate removed)"
   echo "## ALIGNED_WARN   : ${ALIGNED_WARN_PCT}% of an amplicon's fragments removed by that check, at least $ALIGNED_WARN_MIN (flagged in WARNINGS.txt)"
@@ -822,7 +855,7 @@ for fq in "${files[@]}"; do
   # Baseline Variant Calling
   vcf_raw_base="$sample_out/${base}_baseline_raw.vcf"
   vcf_qual_base="$sample_out/${base}_baseline_qual_filtered.vcf"
-  run_log bash -c "{ $FREEBAYES -f '$ref' -p 1 -E -1 --min-mapping-quality $MAPQ_MIN --min-base-quality $BASEQ_MIN $FB_LIMIT '$bam_baseline' | bcftools norm -m -any --atomize -f '$ref' -Ou 2>/dev/null | bcftools norm -m -any -Ou 2>/dev/null | bcftools view -i 'GT=\"alt\" && ALT!=\"*\"' -Ou | bcftools sort -Ov -o '$vcf_raw_base' 2>/dev/null; }"
+  call_variants "$PRIMARY_CALLER" "$bam_baseline" "$vcf_raw_base"
   run_log bcftools filter -i "QUAL>$SAFETY_QUAL && INFO/DP>=$MIN_DEPTH" -Ov -o "$vcf_qual_base" "$vcf_raw_base"
 
   # Baseline Annotation
@@ -1118,7 +1151,7 @@ if AMPS:
   # Trimmed Variant Calling
   vcf_raw_trimmed="$sample_out/${base}_trimmed_raw.vcf"
   vcf_qual_trimmed="$sample_out/${base}_trimmed_qual_filtered.vcf"
-  run_log bash -c "{ $FREEBAYES -f '$ref' -p 1 -E -1 --min-mapping-quality $MAPQ_MIN --min-base-quality $BASEQ_MIN $FB_LIMIT '$bam_trimmed' | bcftools norm -m -any --atomize -f '$ref' -Ou 2>/dev/null | bcftools norm -m -any -Ou 2>/dev/null | bcftools view -i 'GT=\"alt\" && ALT!=\"*\"' -Ou | bcftools sort -Ov -o '$vcf_raw_trimmed' 2>/dev/null; }"
+  call_variants "$PRIMARY_CALLER" "$bam_trimmed" "$vcf_raw_trimmed"
   run_log bcftools filter -i "QUAL>$SAFETY_QUAL && INFO/DP>=$MIN_DEPTH" -Ov -o "$vcf_qual_trimmed" "$vcf_raw_trimmed"
 
   # Trimmed Annotation
@@ -1138,7 +1171,7 @@ echo "[Processing] Extracting heteroplasmy summary for $base..." | tee -a "$log_
 # Define the output path strictly inside the sample's timestamped folder
 het_output="$sample_out/${base}_final_sample_report.tsv"
 
-python3 -c '
+MARK_CALLER="$VARIANT_CALLER" python3 -c '
 import sys, os
 
 # v1.2.8: the sample report is built from the VCFs of the final (primer-clipped) BAM only. The review
@@ -1268,6 +1301,9 @@ with open(het_output, "w") as out:
             out.write(f"{region_name}\t{range_cov}\t{disp_ref}\t{variant_called}\t{het_status}\t{notes}\t{depth}\n")
 
     out.write(f"# MARK v{version} sample report: {base_name}\n")
+    _c = os.environ.get("MARK_CALLER", "freebayes")
+    out.write("# Variant caller: " + {"freebayes": "freebayes", "bcftools": "bcftools (mpileup + call)",
+              "both": "freebayes; bcftools also run for comparison, see " + base_name + "_caller_comparison.txt"}.get(_c, _c) + "\n")
     out.write(f"# From the final (primer-clipped) BAM only. Calls = {base_name}_trimmed_clean.vcf: SNVs with QUAL > {strict_q} "
               f"and depth >= {min_depth}, outside homopolymer regions and excluded sites. The review sections list the other "
               f"sites with QUAL > {safety_q} ({base_name}_trimmed_annotated_all.vcf); they are not calls. "
@@ -1283,6 +1319,94 @@ with open(het_output, "w") as out:
     out.write(HEADER)
     write_variants(below)
 ' "$sample_out" "$base" "$VERSION" "$STRICT_QUAL" "$SAFETY_QUAL" "$MIN_DEPTH" "$ref"
+
+    # v1.5: VARIANT_CALLER=both - bcftools on the same final BAM, through the same filters, then the comparison
+    if [[ "$VARIANT_CALLER" == "both" ]]; then
+      echo "[Calling] Second caller: bcftools on the final BAM (VARIANT_CALLER=both)..." | tee -a "$log_file"
+      bp="$sample_out/${base}_trimmed_bcftools"
+      call_variants bcftools "$bam_trimmed" "${bp}_raw.vcf"
+      run_log bcftools filter -i "QUAL>$SAFETY_QUAL && INFO/DP>=$MIN_DEPTH" -Ov -o "${bp}_qual_filtered.vcf" "${bp}_raw.vcf"
+      run_log bcftools annotate -a "$sample_bed" -c CHROM,FROM,TO,RegionType -h "$sample_out/hdr.txt" -Ov -o "${bp}_annotated_all.vcf" "${bp}_qual_filtered.vcf"
+      run_log bash -c "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '${bp}_annotated_all.vcf' | bcftools filter -e 'POS=7898 || POS=7899 || POS=8595' -Ov -o '${bp}_snps.vcf'"
+      run_log bash -c "bcftools view -i 'TYPE=\"snp\" && QUAL>$STRICT_QUAL' '${bp}_annotated_all.vcf' | bcftools filter -e 'RegionType=\"HP_Region\" || RegionType=\"Excluded_Site\"' -Ov -o '${bp}_clean.vcf'"
+      python3 -c '
+import sys
+d, b, version, strict_q, safety_q, min_depth = sys.argv[1:7]
+real = lambda lin: (lin + 8284) % 16569 or 16569
+def read(path):
+    """SNV records of a VCF: (pos, ref, alt) -> (qual, depth, region label); and the header lines"""
+    recs, hdr = {}, []
+    try: fh = open(path)
+    except OSError: return recs, hdr
+    for l in fh:
+        if l.startswith("#"): hdr.append(l); continue
+        x = l.rstrip("\n").split("\t")
+        if len(x[3]) != 1 or len(x[4]) != 1: continue
+        info = dict(kv.split("=", 1) for kv in x[7].split(";") if "=" in kv)
+        recs[(int(x[1]), x[3], x[4])] = (float(x[5]), int(info.get("DP", 0)), info.get("RegionType", ""))
+    return recs, hdr
+p = f"{d}/{b}_trimmed"
+fb_snps, hdr = read(f"{p}_snps.vcf");  bc_snps, _ = read(f"{p}_bcftools_snps.vcf")
+fb_raw, _ = read(f"{p}_raw.vcf");      bc_raw, _ = read(f"{p}_bcftools_raw.vcf")
+fb_clean, _ = read(f"{p}_clean.vcf");  bc_clean, _ = read(f"{p}_bcftools_clean.vcf")
+keys = sorted(set(fb_snps) | set(bc_snps))
+def state(k, snps, raw):
+    if k in snps: return "called"
+    if k in raw: return "below threshold"
+    return "not found"
+def tag(k):
+    return "both" if (k in fb_snps and k in bc_snps) else ("freebayes_only" if k in fb_snps else "bcftools_only")
+# 1) the combined SNV set, as a VCF (positions on the offset reference until the launcher corrects them)
+with open(f"{p}_snps_both_callers.vcf", "w") as o:
+    for l in hdr:
+        if l.startswith("#CHROM"):
+            o.write("##INFO=<ID=CALLERS,Number=1,Type=String,Description=\"Which callers have this SNV in their snps set: both, freebayes_only or bcftools_only\">\n")
+            o.write("##INFO=<ID=FB,Number=1,Type=String,Description=\"freebayes: called, below threshold (in its raw calls only) or not found\">\n")
+            o.write("##INFO=<ID=FB_QUAL,Number=1,Type=Float,Description=\"freebayes QUAL\">\n##INFO=<ID=FB_DP,Number=1,Type=Integer,Description=\"freebayes depth\">\n")
+            o.write("##INFO=<ID=BCF,Number=1,Type=String,Description=\"bcftools: called, below threshold (in its raw calls only) or not found\">\n")
+            o.write("##INFO=<ID=BCF_QUAL,Number=1,Type=Float,Description=\"bcftools QUAL\">\n##INFO=<ID=BCF_DP,Number=1,Type=Integer,Description=\"bcftools depth\">\n")
+            o.write(f"##MARK_caller_comparison=MARK v{version}; snps sets of both callers (SNV, QUAL > {strict_q}, depth >= {min_depth})\n")
+            o.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + b + "\n")
+        elif l.startswith("##INFO=<ID=CALLERS") or l.startswith("##INFO=<ID=FB") or l.startswith("##INFO=<ID=BCF"): continue
+        else: o.write(l)
+    chrom = next((l.split("ID=")[1].split(",")[0].rstrip(">\n") for l in hdr if l.startswith("##contig=")), "chrM")
+    for k in keys:
+        pos, ref, alt = k
+        fbq = (fb_snps.get(k) or fb_raw.get(k)); bcq = (bc_snps.get(k) or bc_raw.get(k))
+        info = [f"CALLERS={tag(k)}", "FB=" + state(k, fb_snps, fb_raw).replace(" ", "_"), "BCF=" + state(k, bc_snps, bc_raw).replace(" ", "_")]
+        if fbq: info += [f"FB_QUAL={fbq[0]:.2f}", f"FB_DP={fbq[1]}"]
+        if bcq: info += [f"BCF_QUAL={bcq[0]:.2f}", f"BCF_DP={bcq[1]}"]
+        region = (fbq or bcq)[2]
+        if region: info.append(f"RegionType={region}")
+        qual = max(q[0] for q in (fbq, bcq) if q)
+        o.write(f"{chrom}\t{pos}\t.\t{ref}\t{alt}\t{qual:.2f}\tPASS\t{chr(59).join(info)}\tGT\t1\n")
+# 2) the plain-text comparison
+def cell(k, snps, raw):
+    s = state(k, snps, raw); v = snps.get(k) or raw.get(k)
+    return f"{s} (QUAL {v[0]:.0f}, depth {v[1]})" if v else s
+n_both = sum(tag(k) == "both" for k in keys); n_fb = sum(tag(k) == "freebayes_only" for k in keys); n_bc = sum(tag(k) == "bcftools_only" for k in keys)
+with open(f"{d}/{b}_caller_comparison.txt", "w") as o:
+    o.write(f"MARK v{version} - caller comparison for {b} (VARIANT_CALLER=both)\n\n")
+    o.write("Both callers ran on the same final (primer-clipped) BAM and went through the same filters: depth >= "
+            f"{min_depth} and QUAL > {safety_q}, then single-nucleotide variants with QUAL > {strict_q}.\n"
+            "freebayes realigns the reads over each candidate region and judges whole haplotypes; bcftools judges each "
+            "position on its own. The calls in the sample report are freebayes calls.\n\n"
+            "called           in the snps set of that caller\n"
+            "below threshold  that caller found the variant, but below the depth or quality threshold (raw calls only)\n"
+            "not found        that caller did not report the variant at all\n\n")
+    o.write(f"Summary: {len(keys)} SNVs in either snps set; {n_both} called by both, {n_fb} by freebayes only, {n_bc} by bcftools only.\n\n")
+    o.write("rCRS".rjust(6) + "  " + "variant".ljust(9) + "agreement".ljust(16) + "freebayes".ljust(41) + "bcftools".ljust(41) + "note\n")
+    for k in keys:
+        pos, ref, alt = k; r = real(pos)
+        region = ((fb_snps.get(k) or bc_snps.get(k))[2])
+        note = {"HP_Region": "homopolymer region (not in the clean set)", "Excluded_Site": "excluded site (not in the clean set)"}.get(region, "")
+        if tag(k) != "both": note = (note + "; " if note else "") + "one caller only: review the alignment at this position"
+        o.write(f"{r:>6}  {str(r) + alt:<8} {tag(k):<15} {cell(k, fb_snps, fb_raw):<40} {cell(k, bc_snps, bc_raw):<40} {note}\n")
+    o.write("\nFiles: " + f"{b}_trimmed_snps_both_callers.vcf (both sets, tagged), {b}_trimmed_snps.vcf / _clean.vcf (freebayes), "
+            f"{b}_trimmed_bcftools_snps.vcf / _clean.vcf (bcftools).\n")
+print(f"[Calling] Callers compared: {n_both} both, {n_fb} freebayes only, {n_bc} bcftools only")
+' "$sample_out" "$base" "$VERSION" "$STRICT_QUAL" "$SAFETY_QUAL" "$MIN_DEPTH" | tee -a "$log_file"
+    fi
 
     rm -f "$sample_bed" "$sample_out/hdr.txt"
   fi
