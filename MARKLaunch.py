@@ -64,6 +64,18 @@ class Theme:
 # Help shown by the "?" beside each pipeline parameter. "used" says which pipeline reads it;
 # each text says what the setting does in plain terms. Keep in step with MARK.sh / MARK-I.sh.
 PARAM_HELP = {
+    'VARIANT_CALLER': ("Nanopore and Illumina",
+        "Which variant caller makes the calls (since v1.5).\n\n"
+        "freebayes (the default): realigns the reads over each candidate region and judges whole haplotypes. It calls "
+        "variants that sit in or next to homopolymer runs, such as DNA 007 460C in the 456-463 C tract, which a "
+        "position-by-position caller misses on Illumina.\n\n"
+        "bcftools: mpileup + call, as MARK used up to v1.2.10. It judges each position on its own. It misses 460C-type "
+        "variants on Illumina reads that are noisy in a C tract, so it is not the default.\n\n"
+        "both: freebayes makes the calls (the usual files and the sample report); bcftools also runs on the same final BAM "
+        "through the same filters. You get, per library, bcftools' own snps and clean VCFs, a combined VCF "
+        "(<library>_trimmed_snps_both_callers.vcf) in which every variant is tagged as called by both callers, freebayes "
+        "only or bcftools only, and a plain-text table (<library>_caller_comparison.txt) of what each caller called. "
+        "Variants found by one caller only are worth a look in the alignment. Adds well under a minute per library."),
     'TRIM_MODE': ("Nanopore and Illumina",
         "How reads are trimmed, and which reads are kept. Both modes remove the library adapters, and in "
         "both the primer bases are clipped after alignment before variant calling (see CLIP_MODE).\n\n"
@@ -152,7 +164,7 @@ PARAM_HELP = {
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.4.3 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.5 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -167,6 +179,7 @@ class MitoPipelineDashboard:
         self.stop_requested = False
 
         self.dash_defaults = {
+            'VARIANT_CALLER': 'freebayes',  # v1.5: freebayes (default) | bcftools | both; drop-down below
             'TRIM_MODE': 'exact',           # exact (exact amplicon trimming, default) | standard (adapter-list trimming); drop-down below
             'MAX_LEN': '1500',
             'FASTPLONG_ADAPTER_TRIM': '0',   # nanopore, TRIM_MODE=exact only: 1 = fastplong auto adapter trimming
@@ -188,7 +201,8 @@ class MitoPipelineDashboard:
         }
 
         # parameters that take one of a fixed set of values
-        self.choice_params = {'TRIM_MODE': ['standard', 'exact'], 'CLIP_MODE': ['hard', 'soft']}
+        self.choice_params = {'VARIANT_CALLER': ['freebayes', 'bcftools', 'both'],
+                              'TRIM_MODE': ['standard', 'exact'], 'CLIP_MODE': ['hard', 'soft']}
 
         self.var_states = {}
         for var, default_val in self.dash_defaults.items():
@@ -582,7 +596,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.4.3",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.5",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
@@ -1765,12 +1779,17 @@ The result of this run:
   corrected_vcfs/   the calls. One pair per library:
                       <library>_trimmed_clean_corrected.vcf  SNVs called, outside homopolymer regions and excluded sites
                       <library>_trimmed_snps_corrected.vcf   SNVs called, homopolymer sites included
+                    With VARIANT_CALLER=both, also (freebayes still makes the calls above):
+                      <library>_trimmed_bcftools_clean/snps_corrected.vcf  the same two call sets from bcftools
+                      <library>_trimmed_snps_both_callers_corrected.vcf    every SNV in either snps set, tagged
+                                                     CALLERS=both / freebayes_only / bcftools_only
                     Positions are rCRS ({chrom}), sorted.
   cleaned_bams/     the final BAM of each library (<library>_trimmed_sorted_cleaned.bam), primer bases
                     clipped (hard clips by default): the reads the calls were made from. Aligned to the LINEARISED reference:
                     open them in IGV with reference/{ref_name}.
   sample_reports/   <library>_final_sample_report.tsv: the calls with heteroplasmy and depth, then review
                     sections (length variants, homopolymer sites, sites below the call threshold).
+                    With VARIANT_CALLER=both: <library>_caller_comparison.txt, what each caller called.
   qc/               <library>_amplicon_depth.tsv (depth per amplicon) and, where made,
                     <library>_aligned_filter_by_amplicon.tsv (fragments removed after alignment).
   run_summary.txt   the settings and the reads kept at every step, per library.
@@ -1803,7 +1822,9 @@ The alignment intermediates (initial, pe, se BAMs) and the intermediate FASTQs s
             for f in sorted(os.listdir(src_vcf)):
                 if self.stop_requested: return False
                 if "corrected" in f and f.endswith(('.vcf', '.vcf.gz')):
-                    is_call = f.endswith(("_trimmed_clean_corrected.vcf", "_trimmed_snps_corrected.vcf"))
+                    is_call = f.endswith(("_trimmed_clean_corrected.vcf", "_trimmed_snps_corrected.vcf",
+                                          "_trimmed_bcftools_clean_corrected.vcf", "_trimmed_bcftools_snps_corrected.vcf",
+                                          "_trimmed_snps_both_callers_corrected.vcf"))
                     self.copy_with_suffix(os.path.join(src_vcf, f), out["vcf"] if is_call else out["review_vcf"])
                     count += 1
 
@@ -1830,7 +1851,7 @@ The alignment intermediates (initial, pe, se BAMs) and the intermediate FASTQs s
             if d in skip or not os.path.isdir(lib_dir):
                 continue
             for f in sorted(os.listdir(lib_dir)):
-                if f.endswith("_final_sample_report.tsv"):
+                if f.endswith(("_final_sample_report.tsv", "_caller_comparison.txt")):
                     self.copy_with_suffix(os.path.join(lib_dir, f), out["reports"]); count += 1
                 elif f.endswith(("_amplicon_depth.tsv", "_aligned_filter_by_amplicon.tsv")):
                     self.copy_with_suffix(os.path.join(lib_dir, f), out["qc"]); count += 1
