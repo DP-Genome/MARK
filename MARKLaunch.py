@@ -226,7 +226,7 @@ class MitoPipelineDashboard:
 
         # Lay the content out on a grid: the notebook (row 0) takes all the spare
         # height, while the Activity Log (row 1) stays a compact strip of a few
-        # lines (it scrolls). A stretching log took about a quarter of the window
+        # lines (it scrolls), 156 px tall. A stretching log took about a quarter of the window
         # and pushed the parameter table into a scroll.
         content.grid_rowconfigure(0, weight=1)
         content.grid_rowconfigure(1, weight=0, minsize=156)
