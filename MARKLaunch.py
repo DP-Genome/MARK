@@ -152,7 +152,7 @@ PARAM_HELP = {
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.4.3 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.4.4 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -210,13 +210,12 @@ class MitoPipelineDashboard:
         content = tk.Frame(root, bg=Theme.BG)
         content.pack(fill='both', expand=True, padx=14, pady=(0, 10))
 
-        # Lay the content out on a weighted grid: the notebook (row 0) keeps the
-        # lion's share, while the Activity Log (row 1) stretches to fill the space
-        # that used to sit empty between the tabs and the bottom of the window.
-        # Using grid weights (instead of a fixed-height bottom pack) means the log
-        # grows and shrinks with the window rather than leaving dead space.
-        content.grid_rowconfigure(0, weight=3)
-        content.grid_rowconfigure(1, weight=1)
+        # Lay the content out on a grid: the notebook (row 0) takes all the spare
+        # height, while the Activity Log (row 1) stays a compact strip of a few
+        # lines (it scrolls), 170 px tall. A stretching log took about a quarter of
+        # the window and pushed the parameter table into a scroll.
+        content.grid_rowconfigure(0, weight=1)
+        content.grid_rowconfigure(1, weight=0, minsize=170)
         content.grid_columnconfigure(0, weight=1)
 
         # --- Notebook (row 0) ---
@@ -268,7 +267,7 @@ class MitoPipelineDashboard:
         tk.Frame(log_wrap, bg=Theme.TEAL, height=2).pack(fill='x')
 
         self.log_text = scrolledtext.ScrolledText(
-            log_wrap, height=6, state='disabled',
+            log_wrap, height=3, state='disabled',
             font=(Theme.MONO, 9),
             bg=Theme.LOG_BG, fg=Theme.LOG_FG,
             insertbackground=Theme.LOG_FG,
@@ -582,7 +581,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.4.3",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.4.4",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
