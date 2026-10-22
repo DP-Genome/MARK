@@ -2063,7 +2063,83 @@ The alignment intermediates (initial, pe, se BAMs) and the intermediate FASTQs s
         threading.Thread(target=wrapper, daemon=True).start()
 
 
+class _Value:
+    """Stands in for a Tk StringVar outside the GUI."""
+    def __init__(self, v):
+        self.v = v
+
+    def get(self):
+        return self.v
+
+
+class HeadlessPostProcessor:
+    """The four Post-Processing steps without a window: MARKLaunch.py --postprocess RUN_FOLDER.
+    It runs the dashboard's own step functions, in the order the AUTO button runs them."""
+    FINAL_README = MitoPipelineDashboard.FINAL_README
+    _run_warnings = staticmethod(MitoPipelineDashboard._run_warnings)
+    copy_with_suffix = MitoPipelineDashboard.copy_with_suffix
+    create_position_map = MitoPipelineDashboard.create_position_map
+    _run_raw_collection = MitoPipelineDashboard._run_raw_collection
+    _run_vcf_correction = MitoPipelineDashboard._run_vcf_correction
+    _run_bam_cleaning = MitoPipelineDashboard._run_bam_cleaning
+    _run_final_collection = MitoPipelineDashboard._run_final_collection
+
+    def __init__(self, linear_ref, circular_ref):
+        self.stop_requested = False
+        self.ref_path, self.vcf_orig_ref = _Value(linear_ref), _Value(circular_ref)
+
+    def log(self, message):
+        print(message, flush=True)
+
+    def run(self, folder):
+        steps = [("Organizing raw files", lambda: self._run_raw_collection(folder)),
+                 ("Correcting VCFs to rCRS", lambda: self._run_vcf_correction(os.path.join(folder, "vcfs"),
+                                                                             self.vcf_orig_ref.get())),
+                 ("Cleaning BAM headers", lambda: self._run_bam_cleaning(os.path.join(folder, "sorted_bams"))),
+                 ("Gathering final results", lambda: self._run_final_collection(folder))]
+        for i, (name, step) in enumerate(steps, 1):
+            print(f"=== Post-processing step {i}/4: {name} ===", flush=True)
+            if step() is False:
+                print(f"Error: step {i} ({name}) failed.", file=sys.stderr)
+                return 1
+        print(f"Done. Results: {os.path.join(folder, 'Final_Pipeline_Results')}")
+        return 0
+
+
+CLI_HELP = """MARK v1.5 launcher
+
+  python3 MARKLaunch.py                          open the dashboard (GUI)
+  python3 MARKLaunch.py --postprocess RUN_FOLDER run the four Post-Processing steps on a finished run folder
+                                                 (the folder MARK.sh / MARK-I.sh created), without the GUI
+
+Options for --postprocess:
+  --linear-ref FASTA    the linearised reference the run used   (default: linearized_mtdna.fasta beside this script)
+  --rcrs FASTA          the circular reference to convert to    (default: rCRS.fasta beside this script)
+"""
+
+
+def _cli(argv):
+    here = os.path.dirname(os.path.abspath(__file__))
+    if argv[0] in ("-h", "--help"):
+        print(CLI_HELP)
+        return 0
+    if argv[0] != "--postprocess" or len(argv) < 2:
+        print(CLI_HELP, file=sys.stderr)
+        return 2
+    folder = os.path.abspath(argv[1])
+    opts = dict(zip(argv[2::2], argv[3::2]))
+    linear = opts.get("--linear-ref", os.path.join(here, "linearized_mtdna.fasta"))
+    circular = opts.get("--rcrs", os.path.join(here, "rCRS.fasta"))
+    for label, path in (("run folder", folder), ("--linear-ref", linear), ("--rcrs", circular)):
+        if not os.path.exists(path):
+            print(f"Error: {label} '{path}' not found.", file=sys.stderr)
+            return 1
+    return HeadlessPostProcessor(linear, circular).run(folder)
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        sys.exit(_cli(sys.argv[1:]))
     root = tk.Tk()
     app = MitoPipelineDashboard(root)
     root.mainloop()
