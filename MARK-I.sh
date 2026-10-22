@@ -29,37 +29,81 @@ mark_resolve() {
 
 VERSION="1.5"
 
-if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
-  echo -e "MARK Pipeline (Illumina) v$VERSION"
-  echo -e "Usage: MARK-I.sh <input_fastq_file_or_folder>\n"
-  echo -e "DESCRIPTION:"
-  echo -e "  Illumina Merged-Read Diagnostic Split-Track Pipeline for mitochondrial data."
-  echo -e "  This script relies on environment variables for configuration."
-  echo -e "\nCOMMON OVERRIDE VARIABLES (with defaults):"
-  echo -e "  threads=\"8\"              Number of CPU threads to use"
-  echo -e "  VARIANT_CALLER=\"freebayes\" Variant caller: freebayes (default), bcftools, or both (freebayes calls, compared with bcftools)"
-  echo -e "  MIN_DEPTH=\"10\"           Minimum depth for variant calling"
-  echo -e "  READQ=\"20\"               Quality score requirement (fastp)"
-  echo -e "  CUTADAPT_STALL_SECS=\"600\" Seconds without cutadapt output before it is killed and rerun single-core"
-  echo -e "  MIN_LEN=\"90\"             Min RAW fragment length (validated floor; dropped)"
-  echo -e "  MIN_LEN_POST=\"90\"        Shortest product kept after trimming (same window as nanopore)"
-  echo -e "  MAX_LEN_POST=\"300\"       Longest product kept after trimming (same window as nanopore)"
-  echo -e "  MIN_ALIGNED_POST=\"30\"    Template bases a read must align after primer clipping (else read and mate dropped)"
-  echo -e "  CLIP_MODE=\"hard\"         Primer clipping after alignment: hard (default since v1.4.3; primer bases removed from the read) or soft (kept in the BAM)"
-  echo -e "  ALIGNED_WARN_PCT=\"20\"    Flag an amplicon in WARNINGS.txt if that check removes this % of its fragments"
-  echo -e "  (MIN_DEPTH also flags an amplicon in WARNINGS.txt when any insert position is below it in the final BAM)"
-  echo -e "  EXTRA_TRIM=\"0\"           Extra bases to trim from both ends"
-  echo -e "  ref=\"linearized_mtdna.fasta\"     Reference FASTA file (default: the copy beside this script)"
-  echo -e "  regions_bed=\"linearized_regions.bed\" Amplicon BED file (default: the copy beside this script)"
-  echo -e "  RUN_NAME=\"\"             Name for the output folder (default: auto-generated)"
-  echo -e "  OUTPUT_DIR=\"\"           Where to create it (default: beside the input)"
-  echo -e "\nEXAMPLE EXECUTIONS:"
-  echo -e "  # Run with defaults:"
-  echo -e "  MARK-I.sh /path/to/fastqs"
-  echo -e "\n  # Run overriding threads, minimum quality, and max read length:"
-  echo -e "  threads=16 READQ=25 MIN_DEPTH=20 MARK-I.sh /path/to/fastqs"
-  exit 1
-fi
+mark_help() {
+  cat <<EOF
+MARK Pipeline (Illumina) v$VERSION
+Usage: [SETTING=value ...] MARK-I.sh <R1_fastq_or_folder_of_pairs>
+
+  Illumina paired-end mitochondrial control-region pipeline. Input: an R1 FASTQ(.gz) (its R2 is found by
+  replacing _R1/.R1 with _R2/.R2) or a folder of such pairs.
+  Settings are environment variables; anything not set uses the default shown.
+
+VARIANT CALLING
+  VARIANT_CALLER="freebayes"  freebayes (default), bcftools, or both: freebayes makes the calls and bcftools runs on the
+                              same final BAM; writes <lib>_trimmed_snps_both_callers.vcf and <lib>_caller_comparison.txt
+  FREEBAYES="freebayes"       freebayes to run: PATH, else a conda env named mark_fb; or a full path
+  MIN_DEPTH="10"              Minimum read depth for a variant (also flags amplicons with lower depth in WARNINGS.txt)
+  SAFETY_QUAL="20"            First filter: calls need QUAL above this (review VCFs, *_qual_filtered.vcf)
+  STRICT_QUAL="60"            Calls: single-nucleotide variants need QUAL above this (*_snps.vcf, *_clean.vcf)
+  PILEUP_MAX_DEPTH="0"        Most reads the caller reads per position; 0 = no limit
+  BASEQ_MIN="20"              Minimum base quality used in calling
+  MAPQ_MIN="20"               Minimum mapping quality used in calling
+
+TRIMMING AND CLIPPING
+  TRIM_MODE="exact"           exact: keep only whole single-amplicon products, cut at their own primers;
+                              standard: cut adapter sequences from the adapter list wherever found
+  CLIP_MODE="hard"            Primer bases after alignment: hard (removed from the read) or soft (kept as soft clips)
+  PRIMER_ERR="0.10"           Error rate allowed in a primer match (exact mode)
+  PRIMER_MIN_OVERLAP="3"      Minimum primer match length (exact mode)
+  EXTRA_TRIM="0"              Extra bases trimmed from both read ends (standard mode)
+  CUTADAPT_ERR="0.10"         Adapter match error rate (standard mode)
+  CUTADAPT_OVL="5"            Minimum adapter overlap (standard mode)
+
+READ FILTERS AND MERGING
+  READQ="20"                  A base is good quality at this Phred score or above (fastp)
+  UNQUAL_PCT="40"             A pair is dropped if more than this % of a read's bases are below READQ
+  N_BASE_LIMIT="5"            A pair is dropped if a read has more N bases than this
+  MIN_LEN="90"                Shortest merged fragment kept
+  MERGE2_CUT_Q="20"           Second merge pass: 3' quality trimming threshold for pairs that did not merge
+  MERGE2_CUT_WINDOW="4"       Second merge pass: window size for that trimming
+  MERGE2_MIN_LEN="30"         Second merge pass: shortest read kept after that trimming
+  MIN_LEN_POST="90"           Shortest product kept after trimming
+  MAX_LEN_POST="300"          Longest product kept after trimming
+  MIN_ALIGNED_POST="30"       Template bases a read must align after primer clipping (else read and mate removed)
+
+WARNINGS (never stop the run; listed in WARNINGS.txt)
+  PRIMER_WARN_PCT="25"        Flag a library if fewer than this % of its reads carry a primer pair of one amplicon
+  ALIGNED_WARN_PCT="20"       Flag an amplicon if primer clipping removes this % of its fragments ...
+  ALIGNED_WARN_MIN="10"       ... and at least this many
+  PRIMER_DIAG_READS="20000"   Rejected reads kept per step for review (<lib>_primer_rejects_review*.fastq)
+
+FILES AND RUN
+  threads="8"                 CPU threads
+  ref="linearized_mtdna.fasta"            Linearised reference (default: the copy beside this script)
+  regions_bed="linearized_regions.bed"    Homopolymer regions and excluded sites
+  PRIMERS_BED="CRM_Nested_primers_empirical.bed"  Primer coordinates
+  INSERTS_BED="CRM_Nested_inserts.bed"            Amplicon insert coordinates
+  ADAPTER_FILE=""             Adapter list (default: MARK_Adapter_List_Illumina.txt beside this script)
+  BWA_EXTRA=""                Extra bwa-mem2 mem options
+  RUN_NAME=""                 Name of the output folder (default: MARK-I_<input>_<timestamp>_output)
+  OUTPUT_DIR=""               Where to create it (default: beside the input)
+  CUTADAPT_STALL_SECS="600"   Seconds without cutadapt output before it is rerun single-core
+
+EXAMPLES
+  MARK-I.sh /path/to/fastqs                                   # defaults (freebayes)
+  VARIANT_CALLER=both MARK-I.sh /path/to/fastqs               # freebayes calls + bcftools comparison
+  VARIANT_CALLER=bcftools threads=16 MIN_DEPTH=20 MARK-I.sh /path/to/fastqs
+  RUN_NAME=run1 OUTPUT_DIR=/data/out MARK-I.sh /path/to/fastqs
+
+AFTER THE RUN
+  The script writes raw outputs in linearised coordinates. To convert the VCFs to rCRS, clean the BAMs and
+  collect Final_Pipeline_Results/, run post-processing on the run folder (no GUI needed):
+    python3 MARKLaunch.py --postprocess /data/out/run1
+  or use the dashboard (python3 MARKLaunch.py): Step 2 tab, or the AUTO button.
+EOF
+}
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then mark_help; exit 0; fi
+if [[ $# -lt 1 ]]; then mark_help; exit 1; fi
 
 input_path="$1"
 [[ -e "$input_path" ]] || { echo "Error: Input path '$input_path' not found."; exit 1; }
