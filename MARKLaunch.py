@@ -173,7 +173,7 @@ PARAM_HELP = {
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.6 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.6.1 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -236,10 +236,10 @@ class MitoPipelineDashboard:
 
         # Lay the content out on a grid: the notebook (row 0) takes all the spare
         # height, while the Activity Log (row 1) stays a compact strip of a few
-        # lines (it scrolls), 156 px tall. A stretching log took about a quarter of the window
+        # lines (it scrolls), 132 px tall. A stretching log took about a quarter of the window
         # and pushed the parameter table into a scroll.
         content.grid_rowconfigure(0, weight=1)
-        content.grid_rowconfigure(1, weight=0, minsize=156)
+        content.grid_rowconfigure(1, weight=0, minsize=132)
         content.grid_columnconfigure(0, weight=1)
 
         # --- Notebook (row 0) ---
@@ -605,7 +605,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.6",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.6.1",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
@@ -2120,7 +2120,7 @@ class HeadlessPostProcessor:
         return 0
 
 
-CLI_HELP = """MARK v1.6 launcher
+CLI_HELP = """MARK v1.6.1 launcher
 
   python3 MARKLaunch.py                          open the dashboard (GUI)
   python3 MARKLaunch.py --postprocess RUN_FOLDER run the four Post-Processing steps on a finished run folder
