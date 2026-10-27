@@ -57,6 +57,13 @@ Both pipelines map reads to a **linearized mitochondrial reference** and split t
   bcftools runs on the same final BAM through the same filters; MARK then writes a combined VCF tagging every variant as
   called by both callers, freebayes only or bcftools only, and a plain-text comparison per library.
 
+- **Heteroplasmy Report (v1.6)**  
+  The calls come from a one-copy model, which reports the majority base. To show mixtures, freebayes is also run on
+  the final BAM in pooled-continuous mode, and every allele at `HET_MIN_AF` (5% by default) or more of the reads, at
+  depth `MIN_DEPTH` or more, is listed as point (PHP) or length (LHP) heteroplasmy in
+  `<library>_trimmed_heteroplasmy.vcf` (fraction in `INFO/HET_AF`) and in a HETEROPLASMY section of the sample report,
+  with homopolymer regions and excluded sites marked. These are for review, not calls.
+
 - **Debug-Friendly Outputs**  
   Produces multiple VCF layers, including raw, quality-filtered, SNP-only, cleaned, and homopolymer-focused outputs, allowing detailed review of variant behavior across processing stages.
 
@@ -68,7 +75,7 @@ MARK can be installed through Conda when the package is available, or run direct
 
 **Tested Installation:**
 
-Since v1.4 MARK calls variants with **freebayes**. Its bioconda builds cannot share an environment with the validated tool versions on Linux and Apple Silicon (they need older htslib and libdeflate), so it is installed in a second, small environment named `mark_fb`. MARK uses `freebayes` from your `PATH` if it is there, otherwise it finds the `mark_fb` environment by itself; you can also point to any copy with `FREEBAYES=/path/to/freebayes`. With `VARIANT_CALLER=bcftools` (v1.5) freebayes is not needed.
+Since v1.4 MARK calls variants with **freebayes**. Its bioconda builds cannot share an environment with the validated tool versions on Linux and Apple Silicon (they need older htslib and libdeflate), so it is installed in a second, small environment named `mark_fb`. MARK uses `freebayes` from your `PATH` if it is there, otherwise it finds the `mark_fb` environment by itself; you can also point to any copy with `FREEBAYES=/path/to/freebayes`. With `VARIANT_CALLER=bcftools` (v1.5) freebayes is not needed for the calls; the heteroplasmy report (v1.6) still uses it when it is installed and is skipped, with a note in the log, when it is not.
 
 ```bash
 conda create -n mark_env -c conda-forge -c bioconda python=3.10 biopython "fastp>=1.3.7" "fastplong>=0.7.1" "minimap2>=2.31" "bwa-mem2>=2.3" "bcftools>=1.24" "cutadapt>=5.2" "fastqc>=0.12.1" "samtools>=1.24" -y
@@ -154,6 +161,7 @@ variables on the command line. Default values are shown.
 | `STRICT_QUAL` | `60` | Calls: single-nucleotide variants need QUAL above this (`*_snps.vcf`, `*_clean.vcf`). |
 | `PILEUP_MAX_DEPTH` | `0` | Most reads the caller reads at one position; `0` = no limit. |
 | `BASEQ_MIN`, `MAPQ_MIN` | `20`, `20` | Minimum base and mapping quality used in calling. |
+| `HET_MIN_AF` | `0.05` | Heteroplasmy report (v1.6): every allele at this fraction of the reads or more (and at most 1 minus it), at depth `MIN_DEPTH` or more, from freebayes in pooled-continuous mode on the final BAM, in `<library>_trimmed_heteroplasmy.vcf` and the sample report. `0` turns it off. Needs freebayes, also with `VARIANT_CALLER=bcftools`. |
 
 **Trimming and clipping** (both pipelines)
 
@@ -322,6 +330,8 @@ MARK_<input>_<timestamp>_output/
     │                          #   (ISFG/EMPOP: e.g. 152C, 315.1C, 523del 524del), the VCF record beside each indel
     │                          # VARIANT_CALLER=both: <library>_caller_comparison.txt (what each caller called), and in
     │                          #   corrected_vcfs/ the bcftools call sets and <library>_trimmed_snps_both_callers_corrected.vcf
+    │                          # v1.6: the report's HETEROPLASMY section, and in corrected_vcfs/
+    │                          #   <library>_trimmed_heteroplasmy_corrected.vcf (every allele >= HET_MIN_AF; for review)
     ├── qc/                    # per-amplicon depth; fragments removed after alignment
     ├── reference/             # the linearised reference the BAMs are aligned to, for IGV
     └── review/                # every other VCF, and the review ("baseline") BAM

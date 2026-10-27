@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.5"
+VERSION="1.6"
 
 mark_help() {
   cat <<EOF
@@ -48,6 +48,9 @@ VARIANT CALLING
   PILEUP_MAX_DEPTH="0"        Most reads the caller reads per position; 0 = no limit
   BASEQ_MIN="20"              Minimum base quality used in calling
   MAPQ_MIN="20"               Minimum mapping quality used in calling
+  HET_MIN_AF="0.05"           Heteroplasmy report: every allele at this fraction or more (and at most 1 - it) at depth
+                              >= MIN_DEPTH, from freebayes in pooled-continuous mode on the final BAM; 0 = off.
+                              Writes <lib>_trimmed_heteroplasmy.vcf and a HETEROPLASMY section in the sample report
 
 TRIMMING AND CLIPPING
   TRIM_MODE="exact"           exact: keep only whole single-amplicon products, cut at their own primers;
@@ -192,6 +195,12 @@ PRIMARY_CALLER="freebayes"; [[ "$VARIANT_CALLER" == "bcftools" ]] && PRIMARY_CAL
 PILEUP_MAX_IDEPTH="${PILEUP_MAX_IDEPTH:-$BCF_MAX_DEPTH}"; [[ "$PILEUP_MAX_IDEPTH" -le 0 ]] && PILEUP_MAX_IDEPTH=2147483647
 BASEQ_MIN="${BASEQ_MIN:-20}"       
 MAPQ_MIN="${MAPQ_MIN:-20}"
+# v1.6: heteroplasmy report. The calls come from a one-copy model, which reports the majority allele only. For
+# heteroplasmy, freebayes is run again on the final BAM in pooled-continuous mode (allele fractions, no genotype), and
+# every allele with a fraction of at least HET_MIN_AF and at most 1 - HET_MIN_AF, at depth >= MIN_DEPTH, is written to
+# <lib>_trimmed_heteroplasmy.vcf (annotated with homopolymer regions and excluded sites) and to the sample report.
+# These are for review, not calls. 0 = off. Needs freebayes, also with VARIANT_CALLER=bcftools.
+HET_MIN_AF="${HET_MIN_AF:-0.05}"
 EDGE_PROTECT="${EDGE_PROTECT:-1}"
 
 # --- Checks ---
@@ -631,6 +640,11 @@ run_summary_file="$run_out/run_summary.txt"
     both)      echo "## VARIANT CALLER : both - calls by $_fbv; compared with $_bcv" ;;
   esac
   unset _fbv _bcv
+  if awk -v f="$HET_MIN_AF" 'BEGIN{exit !(f > 0)}'; then
+    echo "## HETEROPLASMY   : alleles >= $HET_MIN_AF (HET_MIN_AF) and <= 1 - it, depth >= $MIN_DEPTH; freebayes pooled-continuous on the final BAM (for review)"
+  else
+    echo "## HETEROPLASMY   : off (HET_MIN_AF=0)"
+  fi
   echo "## PILEUP_IDEPTH  : $PILEUP_MAX_IDEPTH"
   echo "## MIN_ALIGNED_POST: $MIN_ALIGNED_POST (template bases a read must align after primer clipping; else read and mate removed)"
   echo "## ALIGNED_WARN   : ${ALIGNED_WARN_PCT}% of an amplicon's fragments removed by that check, at least $ALIGNED_WARN_MIN (flagged in WARNINGS.txt)"
@@ -1190,6 +1204,51 @@ if AMPS:
     run_log bcftools filter -i 'RegionType="HP_Region"' -Ov -o "$sample_out/${base}_trimmed_homopolymers.vcf" "$vcf_annotated_trimmed"
     
 # =========================================================================
+# v1.6: HETEROPLASMY REPORT (allele fractions, HET_MIN_AF)
+# =========================================================================
+    het_vcf="$sample_out/${base}_trimmed_heteroplasmy.vcf"
+    if awk -v f="$HET_MIN_AF" 'BEGIN{exit !(f > 0)}' && command -v "$FREEBAYES" >/dev/null 2>&1; then
+      echo "[Calling] Heteroplasmy: alleles >= $HET_MIN_AF (freebayes, pooled-continuous)..." | tee -a "$log_file"
+      run_log bash -c "{ $FREEBAYES -f '$ref' --pooled-continuous --min-alternate-fraction $HET_MIN_AF --min-alternate-count 2 -E -1 --min-mapping-quality $MAPQ_MIN --min-base-quality $BASEQ_MIN $FB_LIMIT '$bam_trimmed' | bcftools norm -m -any --atomize -f '$ref' -Ou 2>/dev/null | bcftools norm -m -any -Ou 2>/dev/null | bcftools view -e 'ALT=\"*\"' -Ou | bcftools sort -Ov -o '$sample_out/${base}_trimmed_heteroplasmy_raw.vcf' 2>/dev/null; }"
+      # keep alleles with HET_MIN_AF <= AD(alt) / DP <= 1 - HET_MIN_AF at depth >= MIN_DEPTH; HET_AF = that fraction.
+      # A complex freebayes allele (e.g. an insertion next to a base change) is split into single-base records, so one
+      # base change can come from several alleles: their reads are added up (HET_AF, FORMAT/AD and AO), so the fraction is
+      # the share of all reads at the position that carry it.
+      python3 -c '
+import sys
+src, dst, f, min_dp = sys.argv[1], sys.argv[2], float(sys.argv[3]), int(sys.argv[4])
+recs, order, head = {}, [], []
+for l in open(src):
+    if l.startswith("#"):
+        if not l.startswith("##"):
+            head.append("##INFO=<ID=HET_AF,Number=1,Type=Float,Description=\"Fraction of the reads at the position that carry this allele (AD / DP)\">\n")
+        head.append(l); continue
+    x = l.rstrip("\n").split("\t")
+    fmt = dict(zip(x[8].split(":"), x[9].split(":")))
+    ad = fmt.get("AD", ".").split(",")
+    if fmt.get("DP", ".") in (".", "0") or len(ad) < 2 or ad[-1] == ".": continue
+    key = (x[0], x[1], x[3], x[4])
+    if key in recs: recs[key][1] += int(ad[-1]); continue
+    recs[key] = [x, int(ad[-1]), int(fmt["DP"])]; order.append(key)
+with open(dst, "w") as out:
+    out.writelines(head)
+    for key in order:
+        x, ao, dp = recs[key]; af = ao / dp
+        if dp < min_dp or not (f <= af <= 1 - f): continue
+        fk, fv = x[8].split(":"), x[9].split(":")
+        ad = fv[fk.index("AD")].split(","); ad[-1] = str(ao); fv[fk.index("AD")] = ",".join(ad)
+        if "AO" in fk: fv[fk.index("AO")] = str(ao)
+        x[9] = ":".join(fv)
+        x[7] = ("HET_AF=%.4f" % af) + ("" if x[7] in (".", "") else ";" + x[7])
+        out.write("\t".join(x) + "\n")
+' "$sample_out/${base}_trimmed_heteroplasmy_raw.vcf" "$sample_out/${base}_trimmed_heteroplasmy_kept.vcf" "$HET_MIN_AF" "$MIN_DEPTH"
+      run_log bcftools annotate -a "$sample_bed" -c CHROM,FROM,TO,RegionType -h "$sample_out/hdr.txt" -Ov -o "$het_vcf" "$sample_out/${base}_trimmed_heteroplasmy_kept.vcf"
+      rm -f "$sample_out/${base}_trimmed_heteroplasmy_kept.vcf"
+    elif awk -v f="$HET_MIN_AF" 'BEGIN{exit !(f > 0)}'; then
+      echo "[Calling] Heteroplasmy report skipped: it needs freebayes, which was not found (FREEBAYES=$FREEBAYES)." | tee -a "$log_file"
+    fi
+
+# =========================================================================
 # AUTOMATED HETEROPLASMY EXTRACTION (VAF)
 # =========================================================================
 echo "[Processing] Extracting heteroplasmy summary for $base..." | tee -a "$log_file"
@@ -1197,7 +1256,7 @@ echo "[Processing] Extracting heteroplasmy summary for $base..." | tee -a "$log_
 # Define the output path strictly inside the sample's timestamped folder
 het_output="$sample_out/${base}_final_sample_report.tsv"
 
-MARK_CALLER="$VARIANT_CALLER" python3 -c '
+MARK_HET_MIN_AF="$HET_MIN_AF" MARK_CALLER="$VARIANT_CALLER" python3 -c '
 import sys, os
 
 # v1.2.8: the sample report is built from the VCFs of the final (primer-clipped) BAM only. The review
@@ -1335,6 +1394,11 @@ with open(het_output, "w") as out:
               f"sites with QUAL > {safety_q} ({base_name}_trimmed_annotated_all.vcf); they are not calls. "
               f"Heteroplasmy % = reads with the variant / read depth. Variants in forensic notation (ISFG/EMPOP): "
               f"insertions and deletions at the 3-prime end of the repeat they lie in, e.g. 315.1C.\n")
+    _h = float(os.environ.get("MARK_HET_MIN_AF", "0") or 0)
+    if _h > 0:
+        out.write(f"# Heteroplasmy: every allele at {_h:.0%} or more of the reads (and at most {1 - _h:.0%}) at depth >= {min_depth}, "
+                  f"from freebayes in pooled-continuous mode on the final BAM ({base_name}_trimmed_heteroplasmy.vcf). For review: "
+                  f"homopolymer regions and excluded sites are marked, and length heteroplasmy in C tracts is common.\n")
     out.write("### MAIN RESULTS (the calls) ###\n")
     out.write(HEADER)
     write_variants(calls)
@@ -1344,6 +1408,15 @@ with open(het_output, "w") as out:
     out.write("\n### BELOW THE CALL THRESHOLD OR AT AN EXCLUDED SITE (for review, not calls) ###\n")
     out.write(HEADER)
     write_variants(below)
+    if _h > 0:
+        het = parse_vcf(os.path.join(sample_dir, base_name + "_trimmed_heteroplasmy.vcf"))
+        for v in het.values():
+            kind = "point heteroplasmy" if len(v["ref"]) == 1 and len(v["alt"]) == 1 else "length heteroplasmy"
+            where = {"HP_Region": "; homopolymer region", "Excluded_Site": "; excluded site"}.get(v["region_type"], "")
+            v["why"] = kind + where
+        out.write(f"\n### HETEROPLASMY: ALLELES AT {_h:.0%} OR MORE (for review, not calls) ###\n")
+        out.write(HEADER)
+        write_variants(het)
 ' "$sample_out" "$base" "$VERSION" "$STRICT_QUAL" "$SAFETY_QUAL" "$MIN_DEPTH" "$ref"
 
     # v1.5: VARIANT_CALLER=both - bcftools on the same final BAM, through the same filters, then the comparison
