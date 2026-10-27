@@ -111,6 +111,15 @@ PARAM_HELP = {
         "Since v1.4 QUAL is freebayes' score (about 20-35 per clean supporting read), so 60 corresponds to about "
         "2-3 reads and works as a backstop; depth, the one-copy genotype and the homopolymer filters do most of "
         "the work. Raising it far (e.g. 200) can drop real calls whose reads disagree in part."),
+    'HET_MIN_AF': ("Nanopore and Illumina",
+        "Heteroplasmy report (since v1.6). The calls come from a one-copy model, which reports the majority base at each "
+        "position. To show mixtures, freebayes is run again on the final BAM in pooled-continuous mode, which gives the "
+        "fraction of the reads that carry each allele, and every allele at this fraction or more (and at most 1 minus it), "
+        "at depth MIN_DEPTH or more, is listed: in <library>_trimmed_heteroplasmy.vcf (fraction in INFO/HET_AF) and in a "
+        "HETEROPLASMY section of the sample report, as point heteroplasmy (PHP) or length heteroplasmy (LHP).\n\n"
+        "0.05 (5%) is the default. These are for review, not calls: homopolymer regions and excluded sites are marked, "
+        "length heteroplasmy in C tracts is common, and a low-level allele seen in one library only should be checked in a "
+        "replicate. 0 turns the report off. Needs freebayes, also when VARIANT_CALLER is bcftools."),
     'PILEUP_MAX_DEPTH': ("Nanopore and Illumina",
         "The most reads the variant caller (freebayes, since v1.4) looks at in one position; beyond that it uses a "
         "subset, and in a whole-genome pileup later positions can be left with almost no reads, so real calls "
@@ -164,7 +173,7 @@ PARAM_HELP = {
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.5 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.6 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -187,6 +196,7 @@ class MitoPipelineDashboard:
             'QS_MIN': '10',
             'SAFETY_QUAL': '20',
             'STRICT_QUAL': '60',
+            'HET_MIN_AF': '0.05',           # v1.6: heteroplasmy report; 0 = off
             'PILEUP_MAX_DEPTH': '0',                # v1.2.10: 0 = no limit
             'MIN_DEPTH': '15',
             'MIN_LEN': '90',
@@ -595,7 +605,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.5",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.6",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
@@ -1782,12 +1792,15 @@ The result of this run:
                       <library>_trimmed_bcftools_clean/snps_corrected.vcf  the same two call sets from bcftools
                       <library>_trimmed_snps_both_callers_corrected.vcf    every SNV in either snps set, tagged
                                                      CALLERS=both / freebayes_only / bcftools_only
+                    <library>_trimmed_heteroplasmy_corrected.vcf  heteroplasmy report (v1.6): every allele at
+                                                     HET_MIN_AF (5%) or more, fraction in INFO/HET_AF; for review
                     Positions are rCRS ({chrom}), sorted.
   cleaned_bams/     the final BAM of each library (<library>_trimmed_sorted_cleaned.bam), primer bases
                     clipped (hard clips by default): the reads the calls were made from. Aligned to the LINEARISED reference:
                     open them in IGV with reference/{ref_name}.
   sample_reports/   <library>_final_sample_report.tsv: the calls with heteroplasmy and depth, then review
-                    sections (length variants, homopolymer sites, sites below the call threshold).
+                    sections (length variants, homopolymer sites, sites below the call threshold, and
+                    heteroplasmy: every allele at HET_MIN_AF or more).
                     With VARIANT_CALLER=both: <library>_caller_comparison.txt, what each caller called.
   qc/               <library>_amplicon_depth.tsv (depth per amplicon) and, where made,
                     <library>_aligned_filter_by_amplicon.tsv (fragments removed after alignment).
@@ -1823,7 +1836,8 @@ The alignment intermediates (initial, pe, se BAMs) and the intermediate FASTQs s
                 if "corrected" in f and f.endswith(('.vcf', '.vcf.gz')):
                     is_call = f.endswith(("_trimmed_clean_corrected.vcf", "_trimmed_snps_corrected.vcf",
                                           "_trimmed_bcftools_clean_corrected.vcf", "_trimmed_bcftools_snps_corrected.vcf",
-                                          "_trimmed_snps_both_callers_corrected.vcf"))
+                                          "_trimmed_snps_both_callers_corrected.vcf",
+                                          "_trimmed_heteroplasmy_corrected.vcf"))
                     self.copy_with_suffix(os.path.join(src_vcf, f), out["vcf"] if is_call else out["review_vcf"])
                     count += 1
 
@@ -2106,7 +2120,7 @@ class HeadlessPostProcessor:
         return 0
 
 
-CLI_HELP = """MARK v1.5 launcher
+CLI_HELP = """MARK v1.6 launcher
 
   python3 MARKLaunch.py                          open the dashboard (GUI)
   python3 MARKLaunch.py --postprocess RUN_FOLDER run the four Post-Processing steps on a finished run folder
