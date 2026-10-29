@@ -78,7 +78,7 @@ PARAM_HELP = {
         "Variants found by one caller only are worth a look in the alignment. Adds well under a minute per library."),
     'TRIM_MODE': ("Nanopore and Illumina",
         "How reads are trimmed, and which reads are kept. Both modes remove the library adapters, and in "
-        "both the primer bases are clipped after alignment before variant calling (see CLIP_MODE).\n\n"
+        "both the primer bases are hard-clipped after alignment, before variant calling.\n\n"
         "standard: adapter sequences from the adapter list are cut wherever they are found, and any read "
         "long enough afterwards is kept. This was the default up to v1.2.5.\n\n"
         "exact (the default): exact amplicon trimming. A read is kept only if it carries both primers of one amplicon, "
@@ -141,12 +141,6 @@ PARAM_HELP = {
         "The longest product kept after trimming: the upper end of the final length window, the same on both "
         "platforms (default 300). The longest amplicon is 237 bp, so longer reads are by-products such as "
         "read-through products."),
-    'CLIP_MODE': ("Nanopore and Illumina",
-        "How primer bases are clipped after alignment (since v1.4.3). Either way they never reach variant calling, "
-        "and the calls are identical.\n\n"
-        "hard (the default): the primer bases are removed from each read (CIGAR H). The final BAMs are about a fifth "
-        "smaller; the untrimmed baseline BAM still shows the primers for review.\n\n"
-        "soft: the primer bases stay in the final BAM as soft clips (CIGAR S) and are visible in IGV, as up to v1.4.2."),
     'MIN_ALIGNED_POST': ("Nanopore and Illumina",
         "After alignment and primer clipping, every read must still align at least this many template bases. "
         "A read that aligns fewer, or whose mate did not align at all, is removed together with its mate. "
@@ -173,7 +167,7 @@ PARAM_HELP = {
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.6.1 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.6.2 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -203,7 +197,6 @@ class MitoPipelineDashboard:
             'MIN_LEN_POST': '90',
             'MAX_LEN_POST': '300',
             'MIN_ALIGNED_POST': '30',
-            'CLIP_MODE': 'hard',            # v1.4.3: hard (default) | soft; drop-down below
             'EXTRA_TRIM': '22',
             'READQ': '20',
             'UNQUAL_PCT': '40',
@@ -212,7 +205,7 @@ class MitoPipelineDashboard:
 
         # parameters that take one of a fixed set of values
         self.choice_params = {'VARIANT_CALLER': ['freebayes', 'bcftools', 'both'],
-                              'TRIM_MODE': ['standard', 'exact'], 'CLIP_MODE': ['hard', 'soft']}
+                              'TRIM_MODE': ['standard', 'exact']}
 
         self.var_states = {}
         for var, default_val in self.dash_defaults.items():
@@ -605,7 +598,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.6.1",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.6.2",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
@@ -2120,7 +2113,7 @@ class HeadlessPostProcessor:
         return 0
 
 
-CLI_HELP = """MARK v1.6.1 launcher
+CLI_HELP = """MARK v1.6.2 launcher
 
   python3 MARKLaunch.py                          open the dashboard (GUI)
   python3 MARKLaunch.py --postprocess RUN_FOLDER run the four Post-Processing steps on a finished run folder

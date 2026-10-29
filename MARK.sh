@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.6.1"
+VERSION="1.6.2"
 
 mark_help() {
   cat <<EOF
@@ -55,7 +55,6 @@ VARIANT CALLING
 TRIMMING AND CLIPPING
   TRIM_MODE="exact"           exact: keep only whole single-amplicon products, cut at their own primers;
                               standard: cut adapter sequences from the adapter list wherever found
-  CLIP_MODE="hard"            Primer bases after alignment: hard (removed from the read) or soft (kept as soft clips)
   PRIMER_ERR="0.15"           Error rate allowed in a primer match (exact mode)
   PRIMER_MIN_OVERLAP="18"     Minimum primer match length (exact mode)
   FASTPLONG_ADAPTER_TRIM="0"  1 = let fastplong auto-trim adapters (exact mode; off by default)
@@ -220,7 +219,7 @@ ADAPTER_FILE="$(mark_resolve "$ADAPTER_FILE")"
 
 # --- Trimming mode --------------------------------------------------------------------
 # Both modes remove the library adapters, and in both the primer-footprint step later clips
-# the primer bases in the BAM (CLIP_MODE: hard by default since v1.4.3, or soft). They differ in how a read is cut and which reads are kept:
+# the primer bases in the BAM (hard clips: the bases are removed from the read). They differ in how a read is cut and which reads are kept:
 # TRIM_MODE=standard : the pre-v1.2.4 path - adapter sequences from the adapter list are cut
 #                      wherever they are found, and any read long enough afterwards is kept.
 # TRIM_MODE=exact    : the default since v1.2.6 - every read is cut at its own amplicon
@@ -228,14 +227,9 @@ ADAPTER_FILE="$(mark_resolve "$ADAPTER_FILE")"
 #                      the SAME amplicon, with nothing but library adapter outside them, and is cut
 #                      exactly at the outer primer ends. The primers stay on the read on purpose: the
 #                      product coordinates in CRM_Nested_products.bed include them, and the
-#                      primer-footprint step clips them in the BAM (hard clips by default), so no primer base reaches
+#                      primer-footprint step hard-clips them in the BAM, so no primer base reaches
 #                      the caller.
 # The v1.2.4-v1.2.6 names still work: adapters = standard, primers = exact.
-# v1.4.3: primer bases are hard-clipped after alignment (CIGAR H, the bases removed from the read); CLIP_MODE=soft keeps
-# them in the BAM as soft clips (CIGAR S), as up to v1.4.2. Both give identical variant calls.
-CLIP_MODE="${CLIP_MODE:-hard}"
-[[ "$CLIP_MODE" == "hard" || "$CLIP_MODE" == "soft" ]] || { echo "Error: CLIP_MODE must be hard or soft (got '$CLIP_MODE')."; exit 1; }
-export CLIP_MODE
 TRIM_MODE="${TRIM_MODE:-exact}"
 case "$TRIM_MODE" in
   adapters) echo "[Note] TRIM_MODE=adapters is now called TRIM_MODE=standard"; TRIM_MODE=standard ;;
@@ -705,7 +699,7 @@ run_summary_file="$run_out/run_summary.txt"
   echo "##"
   echo "## --- PRE-PROCESSING & TRIMMING ---"
   echo "## MAX_LEN        : $MAX_LEN"
-  echo "## CLIP_MODE      : $CLIP_MODE ($([[ "$CLIP_MODE" == "hard" ]] && echo "primer bases hard-clipped: removed from the reads" || echo "primer bases soft-clipped: kept in the BAM"))"
+  echo "## PRIMER CLIPPING: primer bases hard-clipped: removed from the reads"
   echo "## TRIM_MODE      : $TRIM_MODE$([[ "$TRIM_MODE" == "exact" ]] && echo " (reads cut to one whole amplicon)" || echo " (adapter-list trimming)")"
   echo "## FASTPLONG AUTO ADAPTER TRIM : $([[ ${#fastplong_extra[@]} -gt 0 ]] && echo off || echo on)"
   echo "## QS_MIN         : $QS_MIN"
@@ -893,7 +887,7 @@ for fq in "${files[@]}"; do
   # --- STEP 3: Initial Alignment ---
   bam_initial="$sample_out/${base}_initial_sorted.bam"
   # With exact primer trimming the read ends are real template, so let the aligner reach them
-  # instead of soft-clipping an error-containing primer end (--end-bonus).
+  # instead of leaving an error-containing primer end unaligned (--end-bonus).
   run_log bash -c "{ minimap2 -ax map-ont $MINIMAP_EXTRA -t $threads '$mmi_index' '$final_fq' | samtools view -Sb - | samtools sort -@ $threads -o '$bam_initial'; }"
   run_log samtools index "$bam_initial"
 
@@ -1135,27 +1129,19 @@ for line in sys.stdin:
         else:
             condensed.append([length, op])
 
-    # Reconstruct the CIGAR. v1.4.3: CLIP_MODE=hard (default) writes hard clips (H) and removes the clipped bases from
-    # SEQ and QUAL; hard clips the aligner already made (supplementary pieces) are kept and added to the count.
-    # CLIP_MODE=soft writes soft clips (S) and keeps the bases, as up to v1.4.2.
-    if os.environ.get("CLIP_MODE", "hard") == "hard":
-        ops = cigar_re.findall(cigar)
-        lead_h = int(ops[0][0]) if ops and ops[0][1] == "H" else 0
-        trail_h = int(ops[-1][0]) if len(ops) > 1 and ops[-1][1] == "H" else 0
-        n_seq = len(seq)
-        parts[9] = seq[left_clip:n_seq - right_clip]
-        parts[10] = qual[left_clip:n_seq - right_clip]
-        final_cigar = ""
-        if left_clip + lead_h > 0: final_cigar += f"{left_clip + lead_h}H"
-        for length, op in condensed:
-            final_cigar += f"{length}{op}"
-        if right_clip + trail_h > 0: final_cigar += f"{right_clip + trail_h}H"
-    else:
-        final_cigar = ""
-        if left_clip > 0: final_cigar += f"{left_clip}S"
-        for length, op in condensed:
-            final_cigar += f"{length}{op}"
-        if right_clip > 0: final_cigar += f"{right_clip}S"
+    # Reconstruct the CIGAR with hard clips (H): the clipped bases are removed from SEQ and QUAL; hard clips the
+    # aligner already made (supplementary pieces) are kept and added to the count.
+    ops = cigar_re.findall(cigar)
+    lead_h = int(ops[0][0]) if ops and ops[0][1] == "H" else 0
+    trail_h = int(ops[-1][0]) if len(ops) > 1 and ops[-1][1] == "H" else 0
+    n_seq = len(seq)
+    parts[9] = seq[left_clip:n_seq - right_clip]
+    parts[10] = qual[left_clip:n_seq - right_clip]
+    final_cigar = ""
+    if left_clip + lead_h > 0: final_cigar += f"{left_clip + lead_h}H"
+    for length, op in condensed:
+        final_cigar += f"{length}{op}"
+    if right_clip + trail_h > 0: final_cigar += f"{right_clip + trail_h}H"
 
     parts[3] = str(new_pos + 1)
     parts[5] = final_cigar

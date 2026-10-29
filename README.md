@@ -31,7 +31,7 @@ Both pipelines map reads to a **linearized mitochondrial reference** and split t
    Uses unmodified alignments.
 
 2. **Trimmed Track**  
-   Exact amplicon trimming: a read is kept only if it is one whole PCR product (the forward and reverse primer of the same amplicon). After alignment, the primer bases at each product end are hard-clipped (CIGAR H; `CLIP_MODE=soft` keeps them as soft clips, as up to v1.4.2), so that only insert bases reach variant calling.
+   Exact amplicon trimming: a read is kept only if it is one whole PCR product (the forward and reverse primer of the same amplicon). After alignment, the primer bases at each product end are hard-clipped (CIGAR H: the bases are removed from the read), so that only insert bases reach variant calling.
 
 ---
 
@@ -130,7 +130,7 @@ MARK.sh /data/fastqs                                         # all defaults (fre
 VARIANT_CALLER=bcftools MARK.sh /data/fastqs                 # bcftools instead of freebayes
 VARIANT_CALLER=both MARK-I.sh /data/illumina                 # freebayes calls, compared with bcftools
 threads=16 MIN_DEPTH=20 STRICT_QUAL=80 MARK-I.sh /data/illumina
-CLIP_MODE=soft TRIM_MODE=standard MARK.sh /data/fastqs
+TRIM_MODE=standard MARK.sh /data/fastqs
 FREEBAYES=/opt/freebayes/bin/freebayes MARK.sh /data/fastqs
 ```
 
@@ -168,7 +168,6 @@ variables on the command line. Default values are shown.
 | Setting | Default | What it does |
 |---|---|---|
 | `TRIM_MODE` | `exact` | `exact`: keep a read only if it is one whole amplicon product (forward and reverse primer of the same amplicon), cut at its own primers. `standard`: cut adapter-list sequences wherever found. |
-| `CLIP_MODE` | `hard` | Primer bases after alignment: `hard` removes them from the read (CIGAR `H`); `soft` keeps them as soft clips. The calls are identical. |
 | `PRIMER_ERR` | ONT `0.15`, Illumina `0.10` | Error rate allowed in a primer match (exact mode). |
 | `PRIMER_MIN_OVERLAP` | ONT `18`, Illumina `3` | Minimum primer match length (exact mode). |
 | `EXTRA_TRIM` | `0` | Extra bases trimmed from both read ends (nanopore; Illumina in standard mode). |
@@ -325,7 +324,7 @@ MARK_<input>_<timestamp>_output/
     ├── README.txt             # what every folder holds
     ├── WARNINGS.txt, run_summary.txt
     ├── corrected_vcfs/        # the calls: <library>_trimmed_clean / _trimmed_snps _corrected.vcf, rCRS coordinates
-    ├── cleaned_bams/          # the final BAM of each library (primer bases hard-clipped; CLIP_MODE=soft keeps them)
+    ├── cleaned_bams/          # the final BAM of each library (primer bases hard-clipped)
     ├── sample_reports/        # <library>_final_sample_report.tsv: calls with heteroplasmy and depth; variants in forensic notation
     │                          #   (ISFG/EMPOP: e.g. 152C, 315.1C, 523del 524del), the VCF record beside each indel
     │                          # VARIANT_CALLER=both: <library>_caller_comparison.txt (what each caller called), and in
