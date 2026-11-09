@@ -9,6 +9,7 @@ cp MARK-I.sh $PREFIX/bin/ || echo "Warning: MARK-I.sh not found"
 
 # Copy the Python GUI and scripts
 cp MARKLaunch.py $PREFIX/bin/ || echo "Warning: MARKLaunch.py not found"
+cp MARK_mixture_check.py MARK_het_decompose.py $PREFIX/bin/ || echo "Warning: MARK_mixture_check.py not found"
 cp SequenceAnalyzerApp_v3.py $PREFIX/bin/ || true
 cp vcf_compare_guiv3.py $PREFIX/bin/ || true
 cp VCF_OrganizerApp.py $PREFIX/bin/ || true

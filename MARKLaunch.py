@@ -120,6 +120,16 @@ PARAM_HELP = {
         "0.05 (5%) is the default. These are for review, not calls: homopolymer regions and excluded sites are marked, "
         "length heteroplasmy in C tracts is common, and a low-level allele seen in one library only should be checked in a "
         "replicate. 0 turns the report off. Needs freebayes, also when VARIANT_CALLER is bcftools."),
+    'MIX_MIN_AF': ("Nanopore and Illumina",
+        "Mixture check (since v1.7). In a mixture of two people, or a contaminated library, the second person's bases "
+        "sit together on the same reads at the positions where the two differ; sequencing errors and DNA damage put "
+        "minor bases on reads one at a time. MARK looks for minor bases at two or more positions that are linked on the "
+        "same reads, and flags the library (WARNINGS.txt, a MIXTURE CHECK section in the sample report, "
+        "<library>_mixture_check.tsv) when such a second haplotype is on at least this fraction of the reads covering "
+        "those positions. The report gives its estimated share, its bases and its amplicons.\n\n"
+        "0.02 (2%) is the default: in in-silico mixtures it flagged every library contaminated at 5% or more and most at "
+        "2%, and no unmixed library. Contamination is uneven across amplicons: an amplicon with few reads of its own "
+        "shows a contaminant at a higher share. 0 turns the check off."),
     'PILEUP_MAX_DEPTH': ("Nanopore and Illumina",
         "The most reads the variant caller (freebayes, since v1.4) looks at in one position; beyond that it uses a "
         "subset, and in a whole-genome pileup later positions can be left with almost no reads, so real calls "
@@ -167,7 +177,7 @@ PARAM_HELP = {
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.6.2 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.7 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -191,6 +201,7 @@ class MitoPipelineDashboard:
             'SAFETY_QUAL': '20',
             'STRICT_QUAL': '60',
             'HET_MIN_AF': '0.05',           # v1.6: heteroplasmy report; 0 = off
+            'MIX_MIN_AF': '0.02',           # v1.7: mixture check (second haplotype); 0 = off
             'PILEUP_MAX_DEPTH': '0',                # v1.2.10: 0 = no limit
             'MIN_DEPTH': '15',
             'MIN_LEN': '90',
@@ -598,7 +609,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.6.2",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.7",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
@@ -1793,8 +1804,10 @@ The result of this run:
                     open them in IGV with reference/{ref_name}.
   sample_reports/   <library>_final_sample_report.tsv: the calls with heteroplasmy and depth, then review
                     sections (length variants, homopolymer sites, sites below the call threshold, and
-                    heteroplasmy: every allele at HET_MIN_AF or more).
+                    heteroplasmy: every allele at HET_MIN_AF or more; mixture check: is there a second haplotype?).
                     With VARIANT_CALLER=both: <library>_caller_comparison.txt, what each caller called.
+                    <library>_mixture_check.tsv (v1.7): the mixture check, a second haplotype (minor bases
+                    linked on the same reads) and its estimated share; a library with one is in WARNINGS.txt.
   qc/               <library>_amplicon_depth.tsv (depth per amplicon) and, where made,
                     <library>_aligned_filter_by_amplicon.tsv (fragments removed after alignment).
   run_summary.txt   the settings and the reads kept at every step, per library.
@@ -1857,7 +1870,7 @@ The alignment intermediates (initial, pe, se BAMs) and the intermediate FASTQs s
             if d in skip or not os.path.isdir(lib_dir):
                 continue
             for f in sorted(os.listdir(lib_dir)):
-                if f.endswith(("_final_sample_report.tsv", "_caller_comparison.txt")):
+                if f.endswith(("_final_sample_report.tsv", "_caller_comparison.txt", "_mixture_check.tsv")):
                     self.copy_with_suffix(os.path.join(lib_dir, f), out["reports"]); count += 1
                 elif f.endswith(("_amplicon_depth.tsv", "_aligned_filter_by_amplicon.tsv")):
                     self.copy_with_suffix(os.path.join(lib_dir, f), out["qc"]); count += 1
@@ -2113,7 +2126,7 @@ class HeadlessPostProcessor:
         return 0
 
 
-CLI_HELP = """MARK v1.6.2 launcher
+CLI_HELP = """MARK v1.7 launcher
 
   python3 MARKLaunch.py                          open the dashboard (GUI)
   python3 MARKLaunch.py --postprocess RUN_FOLDER run the four Post-Processing steps on a finished run folder

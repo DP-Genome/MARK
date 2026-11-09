@@ -64,6 +64,16 @@ Both pipelines map reads to a **linearized mitochondrial reference** and split t
   `<library>_trimmed_heteroplasmy.vcf` (fraction in `INFO/HET_AF`) and in a HETEROPLASMY section of the sample report,
   with homopolymer regions and excluded sites marked. These are for review, not calls.
 
+- **Heteroplasmy report fix (v1.7)**: freebayes alleles that join a homopolymer length change and a base change are split by their CIGAR (`MARK_het_decompose.py`), and a base's fraction counts only reads with a base at that position, so no substitution is listed that the reads do not carry.
+- **Homopolymer mask completed (v1.7)**: every homopolymer of 5 or more bases in the panel is now a homopolymer region in `linearized_regions.bed` (added: 66–71, 357–361, 433–438, 16375–16380, 16470–16474).
+- **Mixture Check (v1.7)**  
+  In a mixture of two people, or a contaminated library, the second person's bases sit together on the same reads at
+  the positions where the two differ; sequencing errors and DNA damage put minor bases on reads one at a time. MARK
+  looks for minor bases at two or more positions that are linked on the same reads (a second haplotype). When such a
+  haplotype is on at least `MIX_MIN_AF` (2% by default) of the reads covering it, the library is flagged in
+  `WARNINGS.txt`, the sample report gets a MIXTURE CHECK section with the haplotype's estimated share, bases and
+  amplicons, and the linked pairs are in `<library>_mixture_check.tsv`.
+
 - **Debug-Friendly Outputs**  
   Produces multiple VCF layers, including raw, quality-filtered, SNP-only, cleaned, and homopolymer-focused outputs, allowing detailed review of variant behavior across processing stages.
 
@@ -162,6 +172,7 @@ variables on the command line. Default values are shown.
 | `PILEUP_MAX_DEPTH` | `0` | Most reads the caller reads at one position; `0` = no limit. |
 | `BASEQ_MIN`, `MAPQ_MIN` | `20`, `20` | Minimum base and mapping quality used in calling. |
 | `HET_MIN_AF` | `0.05` | Heteroplasmy report (v1.6): every allele at this fraction of the reads or more (and at most 1 minus it), at depth `MIN_DEPTH` or more, from freebayes in pooled-continuous mode on the final BAM, in `<library>_trimmed_heteroplasmy.vcf` and the sample report. `0` turns it off. Needs freebayes, also with `VARIANT_CALLER=bcftools`. |
+| `MIX_MIN_AF` | `0.02` | Mixture check (v1.7): flag the library when minor bases at two or more positions sit on the same reads (a second haplotype: a mixture or contamination) in at least this fraction of the reads covering them, in `WARNINGS.txt`, the sample report and `<library>_mixture_check.tsv`. `0` turns it off. |
 
 **Trimming and clipping** (both pipelines)
 
@@ -331,6 +342,8 @@ MARK_<input>_<timestamp>_output/
     │                          #   corrected_vcfs/ the bcftools call sets and <library>_trimmed_snps_both_callers_corrected.vcf
     │                          # v1.6: the report's HETEROPLASMY section, and in corrected_vcfs/
     │                          #   <library>_trimmed_heteroplasmy_corrected.vcf (every allele >= HET_MIN_AF; for review)
+    │                          # v1.7: the report's MIXTURE CHECK section and <library>_mixture_check.tsv (a second
+    │                          #   haplotype: minor bases linked on the same reads; flagged in WARNINGS.txt)
     ├── qc/                    # per-amplicon depth; fragments removed after alignment
     ├── reference/             # the linearised reference the BAMs are aligned to, for IGV
     └── review/                # every other VCF, and the review ("baseline") BAM

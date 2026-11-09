@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.6.2"
+VERSION="1.7"
 
 mark_help() {
   cat <<EOF
@@ -51,6 +51,9 @@ VARIANT CALLING
   HET_MIN_AF="0.05"           Heteroplasmy report: every allele at this fraction or more (and at most 1 - it) at depth
                               >= MIN_DEPTH, from freebayes in pooled-continuous mode on the final BAM; 0 = off.
                               Writes <lib>_trimmed_heteroplasmy.vcf and a HETEROPLASMY section in the sample report
+  MIX_MIN_AF="0.02"           Mixture check: flag the library (WARNINGS.txt and the sample report) when minor bases at two
+                              or more positions sit on the same reads (a second haplotype: a mixture or contamination)
+                              in at least this fraction of the reads covering them; 0 = off. Writes <lib>_mixture_check.tsv
 
 TRIMMING AND CLIPPING
   TRIM_MODE="exact"           exact: keep only whole single-amplicon products, cut at their own primers;
@@ -192,6 +195,12 @@ MAPQ_MIN="${MAPQ_MIN:-20}"
 # <lib>_trimmed_heteroplasmy.vcf (annotated with homopolymer regions and excluded sites) and to the sample report.
 # These are for review, not calls. 0 = off. Needs freebayes, also with VARIANT_CALLER=bcftools.
 HET_MIN_AF="${HET_MIN_AF:-0.05}"
+# v1.7: mixture check. In a mixture of two people (or a contaminated library) the second person's bases sit together
+# on the same reads at the positions where the two differ; sequencing errors and DNA damage put minor bases on reads
+# independently. A library whose minor bases at two or more positions are linked on the same reads, in at least
+# MIX_MIN_AF of the reads covering them, is flagged in WARNINGS.txt and in the sample report (MARK_mixture_check.py,
+# <lib>_mixture_check.tsv). 0 = off. Needs pysam (in the MARK environment).
+MIX_MIN_AF="${MIX_MIN_AF:-0.02}"
 EDGE_PROTECT="${EDGE_PROTECT:-1}"
 
 # --- Checks ---
@@ -725,6 +734,11 @@ run_summary_file="$run_out/run_summary.txt"
   else
     echo "## HETEROPLASMY   : off (HET_MIN_AF=0)"
   fi
+  if awk -v f="$MIX_MIN_AF" 'BEGIN{exit !(f > 0)}'; then
+    echo "## MIXTURE_CHECK  : minor bases linked on the same reads at 2+ positions in >= $MIX_MIN_AF of reads (MIX_MIN_AF) = a second haplotype, flagged in WARNINGS.txt"
+  else
+    echo "## MIXTURE_CHECK  : off (MIX_MIN_AF=0)"
+  fi
   echo "## PILEUP_IDEPTH  : $PILEUP_MAX_IDEPTH"
   echo "## MIN_ALIGNED_POST: $MIN_ALIGNED_POST (template bases a read must align after primer clipping; else read and mate removed)"
   echo "## ALIGNED_WARN   : ${ALIGNED_WARN_PCT}% of an amplicon's fragments removed by that check, at least $ALIGNED_WARN_MIN (flagged in WARNINGS.txt)"
@@ -1208,10 +1222,11 @@ if AMPS:
     het_vcf="$sample_out/${base}_trimmed_heteroplasmy.vcf"
     if awk -v f="$HET_MIN_AF" 'BEGIN{exit !(f > 0)}' && command -v "$FREEBAYES" >/dev/null 2>&1; then
       echo "[Calling] Heteroplasmy: alleles >= $HET_MIN_AF (freebayes, pooled-continuous)..." | tee -a "$log_file"
-      run_log bash -c "{ $FREEBAYES -f '$ref' --pooled-continuous --min-alternate-fraction $HET_MIN_AF --min-alternate-count 2 -E -1 --min-mapping-quality $MAPQ_MIN --min-base-quality $BASEQ_MIN $FB_LIMIT '$bam_trimmed' | bcftools norm -m -any --atomize -f '$ref' -Ou 2>/dev/null | bcftools norm -m -any -Ou 2>/dev/null | bcftools view -e 'ALT=\"*\"' -Ou | bcftools sort -Ov -o '$sample_out/${base}_trimmed_heteroplasmy_raw.vcf' 2>/dev/null; }"
+      run_log bash -c "{ $FREEBAYES -f '$ref' --pooled-continuous --min-alternate-fraction $HET_MIN_AF --min-alternate-count 2 -E -1 --min-mapping-quality $MAPQ_MIN --min-base-quality $BASEQ_MIN $FB_LIMIT '$bam_trimmed' | python3 '$SCRIPT_DIR/MARK_het_decompose.py' | bcftools norm -m -any -f '$ref' -Ou 2>/dev/null | bcftools view -e 'ALT=\"*\"' -Ou | bcftools sort -Ov -o '$sample_out/${base}_trimmed_heteroplasmy_raw.vcf' 2>/dev/null; }"
       # keep alleles with HET_MIN_AF <= AD(alt) / DP <= 1 - HET_MIN_AF at depth >= MIN_DEPTH; HET_AF = that fraction.
-      # A complex freebayes allele (e.g. an insertion next to a base change) is split into single-base records, so one
-      # base change can come from several alleles: their reads are added up (HET_AF, FORMAT/AD and AO), so the fraction is
+      # v1.7: a complex freebayes allele (e.g. a deletion in a homopolymer next to a base change) is split by its CIGAR
+      # (MARK_het_decompose.py; splitting it base by base shifted the bases after an indel and made substitutions no read
+      # carries), so one base change can come from several alleles: their reads are added up (HET_AF, FORMAT/AD and AO), so the fraction is
       # the share of all reads at the position that carry it.
       python3 -c '
 import sys
@@ -1245,6 +1260,36 @@ with open(dst, "w") as out:
       rm -f "$sample_out/${base}_trimmed_heteroplasmy_kept.vcf"
     elif awk -v f="$HET_MIN_AF" 'BEGIN{exit !(f > 0)}'; then
       echo "[Calling] Heteroplasmy report skipped: it needs freebayes, which was not found (FREEBAYES=$FREEBAYES)." | tee -a "$log_file"
+    fi
+
+    # v1.7: MIXTURE CHECK - a second haplotype (minor bases linked on the same reads)
+    mix_tsv="$sample_out/${base}_mixture_check.tsv"; rm -f "$mix_tsv"
+    if awk -v f="$MIX_MIN_AF" 'BEGIN{exit !(f > 0)}'; then
+      echo "[Checking] Mixture: are minor bases linked on the same reads (a second haplotype, >= $MIX_MIN_AF of reads)?" | tee -a "$log_file"
+      mix_line=$(python3 "$SCRIPT_DIR/MARK_mixture_check.py" "$bam_trimmed" "$regions_bed" "$mix_tsv" "$MIX_MIN_AF" "$BASEQ_MIN" "$MAPQ_MIN" 2>>"$log_file" | grep '^MIXTURE')
+      IFS=$'\t' read -r _ mix_yes mix_share mix_n mix_pos mix_amps <<< "$mix_line"
+      if [[ "$mix_yes" == "yes" ]]; then
+        mix_pct=$(awk -v s="$mix_share" 'BEGIN{printf "%.1f", 100 * s}')
+        mix_what="evidence of a mixture (second haplotype)"; mix_one=""
+        if [[ "$mix_amps" != *" "* && -n "$mix_amps" ]]; then
+          mix_what="evidence of a mixture (second haplotype), one amplicon only"
+          mix_one="##          Seen in $mix_amps only: contamination concentrated there, or an artefact of that amplicon; check its reads."
+        fi
+        mark_warn "$base" "$mix_what" "${mix_amps// /,}" "${mix_pct}%" \
+          "$(awk -v f="$MIX_MIN_AF" 'BEGIN{printf "%g", 100 * f}')%" "$mix_n" "-" \
+          "minor bases on the same reads: $mix_pos; see ${base}_mixture_check.tsv"
+        {
+          echo "################################################################################"
+          echo "## WARNING: $base - evidence of a MIXTURE or CONTAMINATION: a second haplotype in about ${mix_pct}% of reads"
+          echo "##          (bases $mix_pos, amplicons $mix_amps; see ${base}_mixture_check.tsv)"
+          [[ -n "$mix_one" ]] && echo "$mix_one"
+          echo "################################################################################"
+        } | tee -a "$log_file" >&2
+      elif [[ "$mix_yes" == "no" ]]; then
+        echo "[Checking] Mixture: no evidence of a second haplotype." | tee -a "$log_file"
+      else
+        echo "[Checking] Mixture check could not run (needs python3 with pysam); see the log." | tee -a "$log_file"
+      fi
     fi
 
 # =========================================================================
@@ -1416,6 +1461,16 @@ with open(het_output, "w") as out:
         out.write(f"\n### HETEROPLASMY: ALLELES AT {_h:.0%} OR MORE (for review, not calls) ###\n")
         out.write(HEADER)
         write_variants(het)
+    _mix = os.path.join(sample_dir, base_name + "_mixture_check.tsv")
+    if os.path.exists(_mix):
+        _ml = open(_mix).read().splitlines()
+        out.write("\n### MIXTURE CHECK: A SECOND HAPLOTYPE? ###\n")
+        out.write("# Minor bases that sit together on the same reads at two or more positions are a second haplotype (a mixture "
+                  "of two people, or contamination); sequencing errors and damage are not linked.\n")
+        for _l in _ml:
+            if _l.startswith("# "): out.write(_l[2:] + "\n")
+        if _ml and "EVIDENCE" in _ml[0]:
+            out.write(f"Linked pairs, with read counts: {base_name}_mixture_check.tsv\n")
 ' "$sample_out" "$base" "$VERSION" "$STRICT_QUAL" "$SAFETY_QUAL" "$MIN_DEPTH" "$ref"
 
     # v1.5: VARIANT_CALLER=both - bcftools on the same final BAM, through the same filters, then the comparison
