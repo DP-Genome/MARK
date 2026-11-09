@@ -7,7 +7,7 @@ freebayes reports a haplotype allele when events sit close together, e.g. at rCR
 71T and 72G), and it leaves 73G in two pieces, so a homoplasmic 73G is reported as a 90% heteroplasmy. This script
 splits each alternative allele by its CIGAR (INFO/CIGAR, one per allele): X gives substitutions, I an insertion and D
 a deletion (both anchored on the base before them), M nothing. Every new record carries the reads of its allele
-(FORMAT AD = reads with the reference, reads with the allele; DP unchanged), so the reads of one event that sits in
+(FORMAT AD = reads with the reference, reads with the allele; GT 0/1, GL dropped, QA of that allele), so the reads of one event that sits in
 several alleles are added up later. Alleles without a CIGAR are passed on unchanged.
 For a substitution, FORMAT DP is set to the reads that have a base at that position: the reads of the reference and of
 every allele that does not delete it (RO + those AO). Reads with a deletion there are a length variant (reported as
@@ -60,5 +60,9 @@ for line in sys.stdin:
             if len(rr) == len(aa) == 1 and "DP" in g and all(v.isdigit() for v in ad):
                 g["DP"] = str(int(ad[0]) + sum(int(ad[j + 1]) for j in range(len(alts)) if p not in dels[j]))
             if "AO" in g: g["AO"] = ad[i + 1]
+            if "GT" in g: g["GT"] = "0/1"                      # one alternative allele per record now
+            if "GL" in g: g["GL"] = "."                        # likelihoods of the multi-allele record do not apply
+            for k in ("QA",):
+                if k in g and "," in g[k]: g[k] = g[k].split(",")[i]
             y[8] = ":".join(fk); y[9] = ":".join(g[k] for k in fk)
             sys.stdout.write("\t".join(y) + "\n")
