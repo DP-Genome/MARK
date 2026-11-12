@@ -380,3 +380,7 @@ The corrected VCFs in `Final_Pipeline_Results/corrected_vcfs/` (`<library>_trimm
 ## Citation
 If you use MARK, please cite this repository:
 Omar, Ahmed K A. MARK: Mitochondrial Amplicon Resolving Kit. GitHub repository. https://github.com/DP-Genome/MARK
+
+## Changelog
+
+The changes in every version are listed in [CHANGELOG.md](CHANGELOG.md).
