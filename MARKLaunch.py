@@ -160,12 +160,6 @@ PARAM_HELP = {
     'EXTRA_TRIM': ("Nanopore; Illumina in standard mode",
         "Extra bases removed from both ends of every read after adapter trimming. 0, the script default, "
         "removes nothing. Exact mode on Illumina does not use it."),
-    'FREEBAYES': ("Nanopore and Illumina",
-        "The variant caller (since v1.4). freebayes is installed in its own conda environment, because its "
-        "bioconda builds cannot share one with the other tools on Linux and Apple Silicon:\n\n"
-        "conda create -n mark_fb -c conda-forge -c bioconda freebayes=1.3.10\n\n"
-        "With the default (freebayes), MARK uses freebayes from PATH or, if it is not there, finds an environment "
-        "named mark_fb by itself. To use another copy, override this with its full path."),
     'READQ': ("Illumina",
         "A base counts as good quality if its Phred score is at least this value (fastp). Used with "
         "UNQUAL_PCT when pairs are merged."),
@@ -177,7 +171,7 @@ PARAM_HELP = {
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.7 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.7.1 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -211,7 +205,6 @@ class MitoPipelineDashboard:
             'EXTRA_TRIM': '22',
             'READQ': '20',
             'UNQUAL_PCT': '40',
-            'FREEBAYES': 'freebayes',       # v1.4: the variant caller; found in a mark_fb env if not on PATH
         }
 
         # parameters that take one of a fixed set of values
@@ -609,7 +602,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.7",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.7.1",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
@@ -1576,7 +1569,8 @@ class MitoPipelineDashboard:
             if state['override_var'].get():
                 env[var] = state['entry_var'].get()
 
-        if not self.var_states['FREEBAYES']['override_var'].get():
+        # freebayes is located, not set: from FREEBAYES in the environment, PATH or a conda env named mark_fb
+        if not env.get('FREEBAYES'):
             fb = self.find_freebayes()
             if fb:
                 env['FREEBAYES'] = fb
@@ -1584,6 +1578,8 @@ class MitoPipelineDashboard:
             else:
                 self.log("Warning: freebayes not found on PATH or in a conda environment named mark_fb. Install it with: "
                          "conda create -n mark_fb -c conda-forge -c bioconda freebayes=1.3.10")
+        else:
+            self.log(f"Variant caller: freebayes at {env['FREEBAYES']} (FREEBAYES set in the environment)")
         env['ref'] = self.ref_path.get()
         env['regions_bed'] = self.bed_path.get()
         if self.adapter_path.get():
@@ -2126,7 +2122,7 @@ class HeadlessPostProcessor:
         return 0
 
 
-CLI_HELP = """MARK v1.7 launcher
+CLI_HELP = """MARK v1.7.1 launcher
 
   python3 MARKLaunch.py                          open the dashboard (GUI)
   python3 MARKLaunch.py --postprocess RUN_FOLDER run the four Post-Processing steps on a finished run folder

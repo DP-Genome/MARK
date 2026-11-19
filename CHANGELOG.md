@@ -3,6 +3,7 @@
 What changed in each version of MARK, newest first. The notes for each version are also on the
 [GitHub Releases page](https://github.com/DP-Genome/MARK/releases).
 
+- [v1.7.1](#v171) (2026-11-19)
 - [v1.7](#v17) (2026-11-09)
 - [v1.6.2](#v162) (2026-10-29)
 - [v1.6.1](#v161) (2026-10-27)
@@ -20,6 +21,19 @@ What changed in each version of MARK, newest first. The notes for each version a
 - [v1.2.4](#v124)
 - [v1.2.3](#v123)
 - [v1.2.1](#v121) (2026-09-15)
+
+---
+
+<a id="v171"></a>
+
+## MARK v1.7.1: launcher tidy-up
+
+v1.7.1 changes only the launcher. The pipelines, their settings and their results are the same as in v1.7.
+
+- **The FREEBAYES row is removed from the launcher's parameter table.** It was not an analysis setting but the location
+  of the freebayes program, which the launcher finds by itself: from `PATH`, or from a conda environment named `mark_fb`.
+  A copy elsewhere can still be used: start the launcher, or run `MARK.sh` / `MARK-I.sh`, with
+  `FREEBAYES=/path/to/freebayes` set in the environment. The Activity Log names the freebayes used.
 
 ---
 

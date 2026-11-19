@@ -165,7 +165,7 @@ variables on the command line. Default values are shown.
 | Setting | Default | What it does |
 |---|---|---|
 | `VARIANT_CALLER` | `freebayes` | `freebayes`: realigns reads over each candidate region and judges whole haplotypes. `bcftools`: `mpileup` + `call`, position by position (as up to v1.2.10); freebayes need not be installed. `both`: freebayes makes the calls; bcftools also runs on the same final BAM through the same filters, and MARK writes `<library>_trimmed_snps_both_callers.vcf` (each variant tagged `CALLERS=both`, `freebayes_only` or `bcftools_only`) and `<library>_caller_comparison.txt` (each caller's verdict, QUAL and depth). |
-| `FREEBAYES` | `freebayes` | The freebayes program: from `PATH`, else a conda environment named `mark_fb`, or a full path. |
+| `FREEBAYES` | `freebayes` | The freebayes program: from `PATH`, else a conda environment named `mark_fb`, or a full path. Command line only: the launcher finds freebayes by itself and uses `FREEBAYES` if it is set in the environment it was started from. |
 | `MIN_DEPTH` | `10` | Minimum read depth for a variant. Amplicons with a position below it are also listed in `WARNINGS.txt`. |
 | `SAFETY_QUAL` | `20` | First filter: calls need QUAL above this (the review VCFs). |
 | `STRICT_QUAL` | `60` | Calls: single-nucleotide variants need QUAL above this (`*_snps.vcf`, `*_clean.vcf`). |
