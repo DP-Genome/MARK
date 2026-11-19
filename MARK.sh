@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.7.1"
+VERSION="1.7.2"
 
 mark_help() {
   cat <<EOF
@@ -811,7 +811,7 @@ for fq in "${files[@]}"; do
   printf "%s\t1_QS_GE%s\t%s\t%s\t%s\t%s%%\n" "$base" "$QS_MIN" "$len_reads" "$qs_reads" "$qs_drop" "$qs_pct" >> "$run_summary_file"
 
   # --- STEP 2: Preprocessing ---
-  run_log fastqc "$qs_fq" -o "$sample_out"
+  run_log fastqc "$qs_fq" --outdir "$sample_out"
   
   # Adapter removal, both ends, one pass.
   #
@@ -1577,7 +1577,7 @@ print(f"[Calling] Callers compared: {n_both} both, {n_fb} freebayes only, {n_bc}
   echo "Trimmed Average Depth  : $depth_trimmed" | tee -a "$log_file"
   echo "---------------------------------------------------" | tee -a "$log_file"
 
-  run_log fastqc "$bam_trimmed" -o "$sample_out"
+  run_log fastqc "$bam_trimmed" --outdir "$sample_out"
   echo "Completed Diagnostic Split: $base" | tee -a "$log_file"
 done
 

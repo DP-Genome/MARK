@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.7.1"
+VERSION="1.7.2"
 
 mark_help() {
   cat <<EOF
@@ -753,7 +753,7 @@ for r1 in "${files[@]}"; do
   printf "%s\t1_MergeFilter(Reads)\t%s\t%s\t%s\t%s%%\n" "$base" "$((len_reads * 2))" "$merged_reads" "$merged_drop" "$merged_pct" >> "$run_summary_file"
 
   # --- STEP 2: Preprocessing ---
-  run_log fastqc "$merged_fq" -o "$sample_out" > /dev/null 2>&1
+  run_log fastqc "$merged_fq" --outdir "$sample_out" > /dev/null 2>&1
 
   if [[ "$TRIM_MODE" == "exact" ]]; then
     amp_stats="$sample_out/${base}_amplicon_trim.tsv"
@@ -1564,7 +1564,7 @@ print(f"[Calling] Callers compared: {n_both} both, {n_fb} freebayes only, {n_bc}
   echo "Trimmed Average Depth  : $depth_trimmed" | tee -a "$log_file"
   echo "---------------------------------------------------" | tee -a "$log_file"
 
-  run_log fastqc "$bam_trimmed" -o "$sample_out" > /dev/null 2>&1
+  run_log fastqc "$bam_trimmed" --outdir "$sample_out" > /dev/null 2>&1
   echo "Completed Diagnostic Split: $base" | tee -a "$log_file"
 done
 

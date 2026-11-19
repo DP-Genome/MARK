@@ -13,6 +13,7 @@ cp MARK_mixture_check.py MARK_het_decompose.py $PREFIX/bin/ || echo "Warning: MA
 cp SequenceAnalyzerApp_v3.py $PREFIX/bin/ || true
 cp vcf_compare_guiv3.py $PREFIX/bin/ || true
 cp VCF_OrganizerApp.py $PREFIX/bin/ || true
+cp mark_logo.png $PREFIX/bin/ || echo "Warning: mark_logo.png missing"
 
 # Copy necessary reference files so the GUI can find them automatically
 cp linearized_mtdna.fasta $PREFIX/bin/ || echo "Warning: Fasta missing"

@@ -3,6 +3,7 @@
 What changed in each version of MARK, newest first. The notes for each version are also on the
 [GitHub Releases page](https://github.com/DP-Genome/MARK/releases).
 
+- [v1.7.2](#v172) (2026-11-19)
 - [v1.7.1](#v171) (2026-11-19)
 - [v1.7](#v17) (2026-11-09)
 - [v1.6.2](#v162) (2026-10-29)
@@ -21,6 +22,20 @@ What changed in each version of MARK, newest first. The notes for each version a
 - [v1.2.4](#v124)
 - [v1.2.3](#v123)
 - [v1.2.1](#v121) (2026-09-15)
+
+---
+
+<a id="v172"></a>
+
+## MARK v1.7.2: works with FastQC 0.13
+
+v1.7.2 changes only how FastQC is called and adds the logo to the Anaconda package. The pipelines, their settings and their results are the same as in v1.7.
+
+- **FastQC 0.13 support.** FastQC 0.13.0 no longer accepts the short option `-o`, so a new installation, which gets
+  FastQC 0.13, stopped at the first quality report. `MARK.sh` and `MARK-I.sh` now use `--outdir`, which FastQC 0.12
+  and 0.13 both accept.
+- **Logo in the Anaconda package.** `mark_logo.png` is now installed with the package, so the launcher shows the
+  MARK logo when installed with conda (before, it showed a text placeholder).
 
 ---
 
