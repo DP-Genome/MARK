@@ -102,6 +102,12 @@ python3 MARKLaunch.py
 
 ---
 
+**Older versions.** Anaconda's main channel holds the current releases only. Earlier versions, which no longer
+install cleanly with current tool versions, are kept under the `archive` label, for example:
+`conda create -n mark_old -c akmartian/label/archive -c conda-forge -c bioconda python=3.10 "mark_pipeline==1.7"`.
+
+---
+
 ## Usage
 
 **MARK** can be driven via the interactive GUI dashboard or run entirely from the command line for automation and advanced usage.
