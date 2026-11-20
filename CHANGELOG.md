@@ -3,6 +3,7 @@
 What changed in each version of MARK, newest first. The notes for each version are also on the
 [GitHub Releases page](https://github.com/DP-Genome/MARK/releases).
 
+- [v1.7.3](#v173) (2026-11-20)
 - [v1.7.2](#v172) (2026-11-19)
 - [v1.7.1](#v171) (2026-11-19)
 - [v1.7](#v17) (2026-11-09)
@@ -22,6 +23,21 @@ What changed in each version of MARK, newest first. The notes for each version a
 - [v1.2.4](#v124)
 - [v1.2.3](#v123)
 - [v1.2.1](#v121) (2026-09-15)
+
+---
+
+<a id="v173"></a>
+
+## MARK v1.7.3: new logo
+
+v1.7.3 changes only the logo and the launcher's header. The pipelines, their settings and their results are the same
+as in v1.7.
+
+- **New logo.** The mitochondrial genome as a ring, opened where the control region spans the origin, with three
+  amplicons tiling the gap and an M inside. Files: `mark_logo` (full logo) and `mark_icon` (symbol only), each as SVG
+  and PNG, with `_dark` versions for dark backgrounds.
+- **Launcher header.** The launcher shows the symbol on its navy header, without the white box around the old logo.
+  The README and the launcher screenshot show the new logo.
 
 ---
 

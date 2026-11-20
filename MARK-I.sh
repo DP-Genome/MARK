@@ -27,7 +27,7 @@ mark_resolve() {
   else printf '%s\n' "$1"; fi
 }
 
-VERSION="1.7.2"
+VERSION="1.7.3"
 
 mark_help() {
   cat <<EOF

@@ -171,7 +171,7 @@ PARAM_HELP = {
 class MitoPipelineDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("MARK v1.7.2 — Mitochondrial Amplicon Resolving Kit")
+        self.root.title("MARK v1.7.3 — Mitochondrial Amplicon Resolving Kit")
         self.root.geometry("1180x880")
         self.root.minsize(900, 620)
         self.root.configure(bg=Theme.BG)
@@ -516,6 +516,7 @@ class MitoPipelineDashboard:
         # Find the logo. Search several locations and a few common filenames so the
         # user doesn't have to rename anything.
         candidate_names = [
+            "mark_icon_dark.png",            # v1.7.3: the symbol, drawn for the navy header
             "mark_logo.png", "MARK_logo.png", "mark.png", "MARK.png", "logo.png",
             "F0B5C749-F261-4A31-B164-D580FF584E28.png",
         ]
@@ -602,7 +603,7 @@ class MitoPipelineDashboard:
                  bg=Theme.NAVY, fg="#FFFFFF",
                  font=(Theme.UI, 14, "bold")).pack(anchor='w')
         tk.Label(text_block,
-                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.7.2",
+                 text="ONT / Illumina mitochondrial sequencing pipeline   ·   v1.7.3",
                  bg=Theme.NAVY, fg="#9DB0CC",
                  font=(Theme.UI, 9)).pack(anchor='w', pady=(2, 0))
 
@@ -2122,7 +2123,7 @@ class HeadlessPostProcessor:
         return 0
 
 
-CLI_HELP = """MARK v1.7.2 launcher
+CLI_HELP = """MARK v1.7.3 launcher
 
   python3 MARKLaunch.py                          open the dashboard (GUI)
   python3 MARKLaunch.py --postprocess RUN_FOLDER run the four Post-Processing steps on a finished run folder
