@@ -88,7 +88,7 @@ MARK can be installed through Conda when the package is available, or run direct
 Since v1.4 MARK calls variants with **freebayes**. Its bioconda builds cannot share an environment with the validated tool versions on Linux and Apple Silicon (they need older htslib and libdeflate), so it is installed in a second, small environment named `mark_fb`. MARK uses `freebayes` from your `PATH` if it is there, otherwise it finds the `mark_fb` environment by itself; you can also point to any copy with `FREEBAYES=/path/to/freebayes`. With `VARIANT_CALLER=bcftools` (v1.5) freebayes is not needed for the calls; the heteroplasmy report (v1.6) still uses it when it is installed and is skipped, with a note in the log, when it is not.
 
 ```bash
-conda create -n mark_env -c conda-forge -c bioconda python=3.10 biopython "fastp>=1.3.7" "fastplong>=0.7.1" "minimap2>=2.31" "bwa-mem2>=2.3" "bcftools>=1.24" "cutadapt>=5.2" "fastqc>=0.12.1" "samtools>=1.24" -y
+conda create -n mark_env -c conda-forge -c bioconda python=3.10 tk biopython pandas "numpy<2.0" matplotlib pysam pillow "fastp>=1.3.7" "fastplong>=0.7.1" "minimap2>=2.31" "bwa-mem2>=2.3" "bcftools>=1.24" "cutadapt>=5.2" "fastqc>=0.12.1" "samtools>=1.24" -y
 # freebayes (the variant caller since v1.4) goes in its own environment; MARK finds it there by itself
 conda create -n mark_fb -c conda-forge -c bioconda freebayes=1.3.10 -y
 conda activate mark_env

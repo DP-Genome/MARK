@@ -9,14 +9,15 @@ The easiest way to install the pipeline and all its dependencies is using Conda.
 Open your terminal and run the following commands:
 
 ```bash
-# 1. Create a new conda environment for the pipeline
-conda create -n mark_env python=3.10 -y
+# 1. Create a new conda environment with the mark_pipeline package, in one command
+#    (creating the environment first and installing into it can make conda pick an old MARK version)
+conda create -n mark_env -c akmartian -c conda-forge -c bioconda python=3.10 mark_pipeline -y
 
 # 2. Activate the new environment
 conda activate mark_env
 
-# 3. Install the mark_pipeline package
-conda install -c akmartian -c conda-forge -c bioconda mark_pipeline -y
+# 3. Check the version (MARK.sh --help prints it on the first line)
+MARK.sh --help | head -1
 
 # 4. Install freebayes, the variant caller since v1.4, in its own environment.
 #    (Its bioconda builds need older htslib/libdeflate than the other tools, so they cannot share one.)
