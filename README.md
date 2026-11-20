@@ -103,6 +103,31 @@ MARKLaunch.py            # the launcher; or MARK.sh / MARK-I.sh from the command
 When a run starts, the launcher's Activity Log names the freebayes it uses. If freebayes is missing, MARK stops at the
 start of a run and prints the command above.
 
+### Which systems
+
+MARK runs on **Linux** and **macOS** (Intel and Apple Silicon). Its sequencing tools (samtools, bcftools, fastp and
+others) are not built for Windows, so on **Windows** MARK runs inside **WSL**, the Linux that Windows 10 and 11
+include. In WSL the steps are the same as on Linux.
+
+### Windows (through WSL)
+
+1. Open **PowerShell as administrator**, run the command below, restart the computer, then open **Ubuntu** from the
+   Start menu and choose a user name and password:
+   ```powershell
+   wsl --install
+   ```
+2. In the Ubuntu window, install conda (Miniforge):
+   ```bash
+   wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+   bash Miniforge3-Linux-x86_64.sh -b
+   ~/miniforge3/bin/conda init bash && exec bash
+   ```
+3. Run the two commands of the quick install above, then `conda activate mark_env`.
+
+On Windows 11 the launcher (`MARKLaunch.py`) opens as a normal window. On Windows 10, use `MARK.sh` and `MARK-I.sh`
+from the command line. Windows drives are under `/mnt/c/`, `/mnt/d/` and so on. Runs are faster with the FASTQ files
+copied into the Ubuntu home folder (`~`).
+
 ### From the GitHub source
 
 Since v1.4 MARK calls variants with **freebayes**. Its bioconda builds cannot share an environment with the validated tool versions on Linux and Apple Silicon (they need older htslib and libdeflate), so it is installed in a second, small environment named `mark_fb`. MARK uses `freebayes` from your `PATH` if it is there, otherwise it finds the `mark_fb` environment by itself; you can also point to any copy with `FREEBAYES=/path/to/freebayes`. With `VARIANT_CALLER=bcftools` (v1.5) freebayes is not needed for the calls; the heteroplasmy report (v1.6) still uses it when it is installed and is skipped, with a note in the log, when it is not.
