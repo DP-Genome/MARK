@@ -84,9 +84,26 @@ Both pipelines map reads to a **linearized mitochondrial reference** and split t
 
 ## Installation
 
-MARK can be installed through Conda when the package is available, or run directly from the GitHub source.
+### Quick install (Anaconda): two commands
 
-**Tested Installation:**
+```bash
+conda create -n mark_env -c akmartian -c conda-forge -c bioconda mark_pipeline -y
+conda create -n mark_fb  -c conda-forge -c bioconda freebayes=1.3.10 -y
+```
+
+**Both commands are needed.** The second installs freebayes, MARK's variant caller, in its own environment named
+`mark_fb`, because it cannot share an environment with MARK's other tools (see below). MARK finds `mark_fb` by itself,
+so there is nothing to configure. Then start MARK:
+
+```bash
+conda activate mark_env
+MARKLaunch.py            # the launcher; or MARK.sh / MARK-I.sh from the command line
+```
+
+When a run starts, the launcher's Activity Log names the freebayes it uses. If freebayes is missing, MARK stops at the
+start of a run and prints the command above.
+
+### From the GitHub source
 
 Since v1.4 MARK calls variants with **freebayes**. Its bioconda builds cannot share an environment with the validated tool versions on Linux and Apple Silicon (they need older htslib and libdeflate), so it is installed in a second, small environment named `mark_fb`. MARK uses `freebayes` from your `PATH` if it is there, otherwise it finds the `mark_fb` environment by itself; you can also point to any copy with `FREEBAYES=/path/to/freebayes`. With `VARIANT_CALLER=bcftools` (v1.5) freebayes is not needed for the calls; the heteroplasmy report (v1.6) still uses it when it is installed and is skipped, with a note in the log, when it is not.
 

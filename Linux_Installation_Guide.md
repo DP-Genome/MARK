@@ -13,17 +13,16 @@ Open your terminal and run the following commands:
 #    (creating the environment first and installing into it can make conda pick an old MARK version)
 conda create -n mark_env -c akmartian -c conda-forge -c bioconda mark_pipeline -y
 
-# 2. Activate the new environment
+# 2. Install freebayes, MARK's variant caller, in its own environment named mark_fb (required).
+#    Its builds need an older htslib than MARK's other tools, so they cannot share one environment.
+#    MARK finds the mark_fb environment by itself; nothing to configure.
+conda create -n mark_fb -c conda-forge -c bioconda freebayes=1.3.10 -y
+
+# 3. Activate MARK's environment
 conda activate mark_env
 
-# 3. Check the version (MARK.sh --help prints it on the first line)
+# 4. Check the version (MARK.sh --help prints it on the first line)
 MARK.sh --help | head -1
-
-# 4. Install freebayes, the variant caller since v1.4, in its own environment.
-#    (Its bioconda builds need older htslib/libdeflate than the other tools, so they cannot share one.)
-#    MARK finds an environment named mark_fb by itself, or set FREEBAYES=/path/to/freebayes.
-#    (Not needed if you only run with VARIANT_CALLER=bcftools, available since v1.5.)
-conda create -n mark_fb -c conda-forge -c bioconda freebayes=1.3.10 -y
 ```
 
 ## 2. Verify Installation
